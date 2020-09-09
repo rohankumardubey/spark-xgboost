@@ -17,6 +17,7 @@
 package ml.dmlc.xgboost4j.scala.spark.rapids
 
 import ai.rapids.cudf.DType
+import ml.dmlc.xgboost4j.scala.spark.rapids.RowConverter.StringConverter
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.Row
@@ -83,9 +84,15 @@ private[xgboost4j] object RowConverter {
       case DoubleType => DoubleConverter
       case DateType => DateConverter
       case TimestampType => TimestampConverter
+      case StringType => StringConverter
       case unknown => throw new UnsupportedOperationException(
         s"Type $unknown not supported")
     }
+  }
+
+  private object StringConverter extends TypeConverter {
+    override def convertImpl(row: InternalRow, column: Int): Any =
+      row.getString(column)
   }
 
   private object BooleanConverter extends TypeConverter {

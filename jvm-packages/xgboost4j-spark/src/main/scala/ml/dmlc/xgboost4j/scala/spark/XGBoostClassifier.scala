@@ -19,7 +19,7 @@ package ml.dmlc.xgboost4j.scala.spark
 import ai.rapids.cudf.Table
 import ml.dmlc.xgboost4j.java.Rabit
 import ml.dmlc.xgboost4j.scala.spark.params._
-import ml.dmlc.xgboost4j.scala.spark.rapids.{GpuDeviceManager, GpuSampler, PluginUtils, RowConverter}
+import ml.dmlc.xgboost4j.scala.spark.rapids.{GpuDeviceManager, GpuSampler, GpuTransform, MLUtils, PluginUtils, RowConverter}
 import ml.dmlc.xgboost4j.scala.{Booster, DMatrix, EvalTrait, ObjectiveTrait, XGBoost => SXGBoost}
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
 import org.apache.commons.logging.LogFactory
@@ -43,7 +43,7 @@ import scala.collection.{AbstractIterator, Iterator, mutable}
 private[spark] trait XGBoostClassifierParams extends GeneralParams with LearningTaskParams
   with BoosterParams with HasWeightCol with HasBaseMarginCol with HasNumClass with ParamMapFuncs
   with HasLeafPredictionCol with HasContribPredictionCol with NonParamVariables
-  with HasFeaturesCols
+  with RapidsParams
 
 class XGBoostClassifier (
     override val uid: String,
@@ -318,6 +318,9 @@ class XGBoostClassificationModel private[ml](
     this
   }
 
+  def setBuildAllColumnsInTransform(value: Boolean): this.type =
+    set(buildAllColumnsInTransform, value)
+
   def setLeafPredictionCol(value: String): this.type = set(leafPredictionCol, value)
 
   def setContribPredictionCol(value: String): this.type = set(contribPredictionCol, value)
@@ -362,18 +365,36 @@ class XGBoostClassificationModel private[ml](
     0.0f
   }
 
+  private def buildRddIterator(colNames: Seq[String],
+                               colDataItrs: Seq[Iterator[Row]],
+                               rawIter: Iterator[Row]): Iterator[Row] = {
+    require(colNames.length == colDataItrs.length)
+    colNames.zip(colDataItrs).foldLeft(rawIter) {
+      case (outIt, (cName, dataIt)) =>
+        if (cName.nonEmpty && dataIt.nonEmpty) {
+          outIt.zip(dataIt).map {
+            case (origRow, dataRow) => Row.fromSeq(origRow.toSeq ++ dataRow.toSeq)
+          }
+        } else outIt
+    }
+  }
+
   private def transformInternalHonorGpu(dataFrame: DataFrame, sampler: Option[GpuSampler] = None,
-      colNameToBuild: Option[String] = None): DataFrame = {
+      colNameToBuild: Option[String] = None, buildAllColumns: Boolean = true): DataFrame = {
 
     val originalSchema = dataFrame.schema
 
-    // dataReadSchema filters out some fields that RowConverter is not supporting
-    val dataReadSchema = colNameToBuild.map(name => StructType(originalSchema.fields.filter(x =>
-      RowConverter.isSupportingType(x.dataType) && x.name.equals(name))))
-      .getOrElse(StructType(originalSchema.fields.filter(x =>
-        RowConverter.isSupportingType(x.dataType))))
+    val dataReadSchema = if (!buildAllColumns) {
+      // dataReadSchema filters out some fields that RowConverter is not supporting
+      colNameToBuild.map(name => StructType(originalSchema.fields.filter(x =>
+        RowConverter.isSupportingType(x.dataType) && x.name.equals(name))))
+        .getOrElse(StructType(originalSchema.fields.filter(x =>
+          RowConverter.isSupportingType(x.dataType))))
+    } else {
+      originalSchema
+    }
 
-    colNameToBuild.map(name => require(dataReadSchema.nonEmpty, s"Schema didn't include " +
+    colNameToBuild.map(name => require(dataReadSchema.nonEmpty, s"Schema doesn't include " +
       s"${name} column to build! "))
 
     val schema = StructType(dataReadSchema.fields ++
@@ -385,7 +406,7 @@ class XGBoostClassificationModel private[ml](
     val bBooster = dataFrame.sparkSession.sparkContext.broadcast(_booster)
     val appName = dataFrame.sparkSession.sparkContext.appName
 
-    val featuresColslist = $(featuresCols)
+    val featuresColslist = getFeaturesCols
     val featureIndices = featuresColslist.filter(originalSchema.fieldNames.contains)
       .map(originalSchema.fieldIndex)
     require(featureIndices.length == featuresColslist.length,
@@ -397,36 +418,54 @@ class XGBoostClassificationModel private[ml](
 
     val sc = dataFrame.sparkSession.sparkContext
     val isLocal = sc.isLocal
-    val resultRDD = PluginUtils.toColumnarRdd(dataFrame).mapPartitions((iter: Iterator[Table]) => {
-      val gpuId = GpuDeviceManager.getGpuId(isLocal)
-      logger.info("XGboost transform GPU pipeline using device: " + gpuId)
 
-      val ((dm, columnBatchToRow), time) = PluginUtils.time("Transform: build dmatrix and row") {
-        DataUtils.buildDMatrixIncrementally(
-          gpuId, missing, featureIndices, iter, originalSchema, sampler, colNameToBuild)
-      }
-      logger.debug("Benchmark [Transform: Build Dmatrix and Row] " + time)
+    val Seq(leafName, contribName) = GpuTransform.getColumnNames(this)(
+      leafPredictionCol, contribPredictionCol)
+    val colNames = Seq[String](_rawPredictionCol, _probabilityCol, leafName, contribName)
 
-      if (dm == null) {
-        logger.info("No data for DMatrix")
-        Iterator.empty
+    // predictFunc = producePredictionItrs + produceResultIterator
+    val predictFunc = (bBooster: Broadcast[Booster], dm: DMatrix, rawIter: Iterator[Row]) => {
+      val colDataItrs = producePredictionItrs(bBooster, dm)
+      buildRddIterator(colNames, colDataItrs, rawIter)
+    }
+
+    val resultRDD = PluginUtils.toColumnarRdd(dataFrame).mapPartitions { iter: Iterator[Table] =>
+      if (buildAllColumns) {
+        GpuTransform.cudfTableToRowIterator(iter, originalSchema, bBooster, isLocal, missing,
+          featureIndices, predictFunc, sampler)
       } else {
-        val rabitEnv = Array("DMLC_TASK_ID" -> TaskContext.getPartitionId().toString).toMap
-        Rabit.init(rabitEnv.asJava)
-        try {
-          // since native model will not save predictor context, force to gpu predictor
-          bBooster.value.setParam("predictor", "gpu_predictor")
-          val Array(rawPredictionItr, probabilityItr, predLeafItr, predContribItr) =
-            producePredictionItrs(bBooster, dm)
+        // Deprecated. should be removed
+        val gpuId = GpuDeviceManager.getGpuId(isLocal)
+        logger.info("XGboost transform GPU pipeline using device: " + gpuId)
 
-          produceResultIterator(columnBatchToRow.toIterator,
-            rawPredictionItr, probabilityItr, predLeafItr, predContribItr)
-        } finally {
-          Rabit.shutdown()
-          dm.delete()
+        val ((dm, columnBatchToRow), time) = PluginUtils
+          .time("Transform: build dmatrix and row") {
+            DataUtils.buildDMatrixIncrementally(
+              gpuId, missing, featureIndices, iter, originalSchema, sampler, colNameToBuild)
+          }
+        logger.debug("Benchmark [Transform: Build Dmatrix and Row] " + time)
+
+        if (dm == null) {
+          logger.info("No data for DMatrix")
+          Iterator.empty
+        } else {
+          val rabitEnv = Array("DMLC_TASK_ID" -> TaskContext.getPartitionId().toString).toMap
+          Rabit.init(rabitEnv.asJava)
+          try {
+            // since native model will not save predictor context, force to gpu predictor
+            bBooster.value.setParam("predictor", "gpu_predictor")
+            val Array(rawPredictionItr, probabilityItr, predLeafItr, predContribItr) =
+              producePredictionItrs(bBooster, dm)
+
+            produceResultIterator(columnBatchToRow.toIterator,
+              rawPredictionItr, probabilityItr, predLeafItr, predContribItr)
+          } finally {
+            Rabit.shutdown()
+            dm.delete()
+          }
         }
       }
-    })
+    }
 
     bBooster.unpersist(blocking = false)
     dataFrame.sparkSession.createDataFrame(resultRDD, generateResultSchema(schema))
@@ -588,7 +627,7 @@ class XGBoostClassificationModel private[ml](
     // This is a bit complicated since it tries to avoid repeated computation.
     var outputData = if (isSupportColumnar) {
       transformInternalHonorGpu(
-        dataset.asInstanceOf[DataFrame], None, None)
+        dataset.asInstanceOf[DataFrame], None, None, getBuildAllColumnsInTransform)
     } else {
       transformInternal(dataset)
     }
@@ -656,7 +695,7 @@ class XGBoostClassificationModel private[ml](
     // Output selected columns only.
     // This is a bit complicated since it tries to avoid repeated computation.
     var outputData = transformInternalHonorGpu(
-        dataset.asInstanceOf[DataFrame], sampler, colNameToBuild)
+        dataset.asInstanceOf[DataFrame], sampler, colNameToBuild, false)
 
     var numColsOutput = 0
 
@@ -718,8 +757,8 @@ class XGBoostClassificationModel private[ml](
 
 object XGBoostClassificationModel extends MLReadable[XGBoostClassificationModel] {
 
-  private val _rawPredictionCol = "_rawPrediction"
-  private val _probabilityCol = "_probability"
+  private[spark] val _rawPredictionCol = "_rawPrediction"
+  private[spark] val _probabilityCol = "_probability"
 
   override def read: MLReader[XGBoostClassificationModel] = new XGBoostClassificationModelReader
 
