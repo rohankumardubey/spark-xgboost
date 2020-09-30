@@ -228,7 +228,7 @@ trait HasGroupCol extends Params {
 
 }
 
-trait HasFeaturesCols extends Params {
+trait RapidsParams extends Params {
   /**
     * Param for the name of multiple features columns.
     * @group param
@@ -240,6 +240,15 @@ trait HasFeaturesCols extends Params {
 
   /** @group getParam */
   final def getFeaturesCols: Seq[String] = $(featuresCols)
+
+  final val buildAllColumnsInTransform = new BooleanParam(this,
+    "buildAllColumnsInTransform", "whether building all columns when transform." +
+      " when set to false, only columns with numeric type can be built. Defaut to true")
+
+  // default to true
+  setDefault(buildAllColumnsInTransform, true)
+
+  final def getBuildAllColumnsInTransform: Boolean = $(buildAllColumnsInTransform)
 }
 
 trait HasNumClass extends Params {
