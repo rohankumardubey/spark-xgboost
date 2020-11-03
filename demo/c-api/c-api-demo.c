@@ -20,12 +20,12 @@ if (err != 0) {                                                         \
 int main(int argc, char** argv) {
   int silent = 0;
   int use_gpu = 0;  // set to 1 to use the GPU for training
-  
+
   // load the data
   DMatrixHandle dtrain, dtest;
   safe_xgboost(XGDMatrixCreateFromFile("../data/agaricus.txt.train", silent, &dtrain));
   safe_xgboost(XGDMatrixCreateFromFile("../data/agaricus.txt.test", silent, &dtest));
-  
+
   // create the booster
   BoosterHandle booster;
   DMatrixHandle eval_dmats[2] = {dtrain, dtest};
@@ -36,13 +36,12 @@ int main(int argc, char** argv) {
   //   https://xgboost.readthedocs.io/en/latest/parameter.html
   safe_xgboost(XGBoosterSetParam(booster, "tree_method", use_gpu ? "gpu_hist" : "hist"));
   if (use_gpu) {
-    // set the number of GPUs and the first GPU to use;
+    // set the GPU to use;
     // this is not necessary, but provided here as an illustration
-    safe_xgboost(XGBoosterSetParam(booster, "n_gpus", "1"));
     safe_xgboost(XGBoosterSetParam(booster, "gpu_id", "0"));
   } else {
     // avoid evaluating objective and metric on a GPU
-    safe_xgboost(XGBoosterSetParam(booster, "n_gpus", "0"));
+    safe_xgboost(XGBoosterSetParam(booster, "gpu_id", "-1"));
   }
 
   safe_xgboost(XGBoosterSetParam(booster, "objective", "binary:logistic"));
@@ -50,7 +49,7 @@ int main(int argc, char** argv) {
   safe_xgboost(XGBoosterSetParam(booster, "gamma", "0.1"));
   safe_xgboost(XGBoosterSetParam(booster, "max_depth", "3"));
   safe_xgboost(XGBoosterSetParam(booster, "verbosity", silent ? "0" : "1"));
-  
+
   // train and evaluate for 10 iterations
   int n_trees = 10;
   const char* eval_names[2] = {"train", "test"};
@@ -61,12 +60,16 @@ int main(int argc, char** argv) {
     printf("%s\n", eval_result);
   }
 
+  bst_ulong num_feature = 0;
+  safe_xgboost(XGBoosterGetNumFeature(booster, &num_feature));
+  printf("num_feature: %llu\n", num_feature);
+
   // predict
   bst_ulong out_len = 0;
   const float* out_result = NULL;
   int n_print = 10;
 
-  safe_xgboost(XGBoosterPredict(booster, dtest, 0, 0, &out_len, &out_result));
+  safe_xgboost(XGBoosterPredict(booster, dtest, 0, 0, 0, &out_len, &out_result));
   printf("y_pred: ");
   for (int i = 0; i < n_print; ++i) {
     printf("%1.4f ", out_result[i]);

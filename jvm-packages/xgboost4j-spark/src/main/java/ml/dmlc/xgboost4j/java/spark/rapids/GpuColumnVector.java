@@ -33,6 +33,7 @@ import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.apache.spark.sql.vectorized.ColumnarMap;
 import org.apache.spark.unsafe.types.UTF8String;
 
+
 /**
  * A GPU accelerated version of the Spark ColumnVector.
  * Most of the standard Spark APIs should never be called, as they assume that the data
@@ -42,7 +43,7 @@ import org.apache.spark.unsafe.types.UTF8String;
 public class GpuColumnVector extends ColumnVector {
 
   public static final class GpuColumnarBatchBuilder implements AutoCloseable {
-    private final HostColumnVector.Builder[] builders;
+    private final ai.rapids.cudf.HostColumnVector.Builder[] builders;
     private final StructField[] fields;
 
     /**
@@ -57,7 +58,7 @@ public class GpuColumnVector extends ColumnVector {
     public GpuColumnarBatchBuilder(StructType schema, int rows, ColumnarBatch batch) {
       fields = schema.fields();
       int len = fields.length;
-      builders = new HostColumnVector.Builder[len];
+      builders = new ai.rapids.cudf.HostColumnVector.Builder[len];
       boolean success = false;
       try {
         for (int i = 0; i < len; i++) {
@@ -78,15 +79,15 @@ public class GpuColumnVector extends ColumnVector {
                 }
               }
             }
-            builders[i] = HostColumnVector.builder(rows, bufferSize);
+            builders[i] = ai.rapids.cudf.HostColumnVector.builder(rows, bufferSize);
           } else {
-            builders[i] = HostColumnVector.builder(type, rows);
+            builders[i] = ai.rapids.cudf.HostColumnVector.builder(type, rows);
           }
           success = true;
         }
       } finally {
         if (!success) {
-          for (HostColumnVector.Builder b: builders) {
+          for (ai.rapids.cudf.HostColumnVector.Builder b: builders) {
             if (b != null) {
               b.close();
             }
@@ -95,7 +96,7 @@ public class GpuColumnVector extends ColumnVector {
       }
     }
 
-    public HostColumnVector.Builder builder(int i) {
+    public ai.rapids.cudf.HostColumnVector.Builder builder(int i) {
       return builders[i];
     }
 
@@ -124,7 +125,7 @@ public class GpuColumnVector extends ColumnVector {
 
     @Override
     public void close() {
-      for (HostColumnVector.Builder b: builders) {
+      for (ai.rapids.cudf.HostColumnVector.Builder b: builders) {
         if (b != null) {
           b.close();
         }

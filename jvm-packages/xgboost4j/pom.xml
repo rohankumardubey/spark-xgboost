@@ -6,13 +6,32 @@
     <parent>
         <groupId>com.nvidia</groupId>
         <artifactId>xgboost-jvm_3.0</artifactId>
-        <version>1.0.0-0.2.0</version>
+        <version>1.2.0-0.1.0</version>
     </parent>
     <artifactId>xgboost4j_3.0</artifactId>
-    <version>1.0.0-0.2.0</version>
+    <version>1.2.0-0.1.0</version>
     <packaging>jar</packaging>
 
     <dependencies>
+      <dependency>
+        <groupId>ai.rapids</groupId>
+        <artifactId>cudf</artifactId>
+        <version>${cudf.version}</version>
+        <classifier>${cudf.classifier}</classifier>
+      </dependency>
+
+      <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-hdfs</artifactId>
+            <version>${hadoop.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>${hadoop.version}</version>
+            <scope>provided</scope>
+        </dependency>
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
@@ -32,17 +51,20 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>ai.rapids</groupId>
-            <artifactId>cudf</artifactId>
-            <version>${cudf.version}</version>
-            <classifier>${cudf.classifier}</classifier>
-            <scope>provided</scope>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>2.10.3</version>
         </dependency>
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>1.7.9</version>
-            <scope>test</scope>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>2.10.3</version>
+        </dependency>
+        <dependency>
+          <groupId>org.scalatest</groupId>
+          <artifactId>scalatest_${scala.binary.version}</artifactId>
+          <version>3.0.5</version>
+          <scope>compile</scope>
         </dependency>
     </dependencies>
 
@@ -70,29 +92,6 @@
               <version>1.6.0</version>
               <executions>
                   <execution>
-                      <id>version-check</id>
-                      <phase>validate</phase>
-                      <goals>
-                          <goal>exec</goal>
-                      </goals>
-                  </execution>
-              </executions>
-              <configuration>
-                  <executable>python</executable>
-                  <arguments>
-                      <argument>cudautils.py</argument>
-                      <argument>c</argument>
-                      <argument>${cudf.classifier}</argument>
-                  </arguments>
-                  <workingDirectory>${user.dir}</workingDirectory>
-              </configuration>
-          </plugin>
-          <plugin>
-              <artifactId>exec-maven-plugin</artifactId>
-              <groupId>org.codehaus.mojo</groupId>
-              <version>1.6.0</version>
-              <executions>
-                  <execution>
                       <id>native</id>
                       <phase>generate-sources</phase>
                       <goals>
@@ -102,6 +101,10 @@
                           <executable>python</executable>
                           <arguments>
                             <argument>create_jni.py</argument>
+                            <argument>--log-capi-invocation</argument>
+                            <argument>${log.capi.invocation}</argument>
+                            <argument>--use-cuda</argument>
+                            <argument>${use.cuda}</argument>
                           </arguments>
                           <workingDirectory>${user.dir}</workingDirectory>
                       </configuration>
@@ -112,6 +115,13 @@
               <groupId>org.apache.maven.plugins</groupId>
               <artifactId>maven-jar-plugin</artifactId>
               <version>3.0.2</version>
+              <executions>
+                  <execution>
+                      <goals>
+                          <goal>test-jar</goal>
+                      </goals>
+                  </execution>
+              </executions>
           </plugin>
           <plugin>
               <groupId>org.apache.maven.plugins</groupId>

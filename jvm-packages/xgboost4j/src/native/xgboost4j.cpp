@@ -12,7 +12,9 @@
   limitations under the License.
 */
 
+#include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <rabit/c_api.h>
 #include <xgboost/c_api.h>
 #include <xgboost/base.h>
@@ -21,9 +23,9 @@
 #include <cstring>
 #include <vector>
 #include <string>
-#ifdef XGBOOST_USE_CUDF
-#include <xgboost/gpu_column.h>
-#endif
+
+#include "../../../../src/data/array_interface.h"
+#include "jvm_utils.h"
 
 // helper functions
 // set handle
@@ -36,12 +38,14 @@ void setHandle(JNIEnv *jenv, jlongArray jhandle, void* handle) {
   jenv->SetLongArrayRegion(jhandle, 0, 1, &out);
 }
 
-// global JVM
-static JavaVM* global_jvm = nullptr;
+JavaVM*& GlobalJvm() {
+  static JavaVM* vm;
+  return vm;
+}
 
 // overrides JNI on load
 jint JNI_OnLoad(JavaVM *vm, void *reserved) {
-  global_jvm = vm;
+  GlobalJvm() = vm;
   return JNI_VERSION_1_6;
 }
 
@@ -51,9 +55,9 @@ XGB_EXTERN_C int XGBoost4jCallbackDataIterNext(
     DataHolderHandle set_function_handle) {
   jobject jiter = static_cast<jobject>(data_handle);
   JNIEnv* jenv;
-  int jni_status = global_jvm->GetEnv((void **)&jenv, JNI_VERSION_1_6);
+  int jni_status = GlobalJvm()->GetEnv((void **)&jenv, JNI_VERSION_1_6);
   if (jni_status == JNI_EDETACHED) {
-    global_jvm->AttachCurrentThread(reinterpret_cast<void **>(&jenv), nullptr);
+    GlobalJvm()->AttachCurrentThread(reinterpret_cast<void **>(&jenv), nullptr);
   } else {
     CHECK(jni_status == JNI_OK);
   }
@@ -83,9 +87,12 @@ XGB_EXTERN_C int XGBoost4jCallbackDataIterNext(
       jintArray jindex = (jintArray)jenv->GetObjectField(
           batch, jenv->GetFieldID(batchClass, "featureIndex", "[I"));
       jfloatArray jvalue = (jfloatArray)jenv->GetObjectField(
-        batch, jenv->GetFieldID(batchClass, "featureValue", "[F"));
+          batch, jenv->GetFieldID(batchClass, "featureValue", "[F"));
+      jint jcols = jenv->GetIntField(
+          batch, jenv->GetFieldID(batchClass, "featureCols", "I"));
       XGBoostBatchCSR cbatch;
       cbatch.size = jenv->GetArrayLength(joffset) - 1;
+      cbatch.columns = jcols;
       cbatch.offset = reinterpret_cast<jlong *>(
           jenv->GetLongArrayElements(joffset, 0));
       if (jlabel != nullptr) {
@@ -138,13 +145,13 @@ XGB_EXTERN_C int XGBoost4jCallbackDataIterNext(
     jenv->DeleteLocalRef(iterClass);
     // only detach if it is a async call.
     if (jni_status == JNI_EDETACHED) {
-      global_jvm->DetachCurrentThread();
+      GlobalJvm()->DetachCurrentThread();
     }
     return ret_value;
-  } catch(dmlc::Error e) {
+  } catch(dmlc::Error const& e) {
     // only detach if it is a async call.
     if (jni_status == JNI_EDETACHED) {
-      global_jvm->DetachCurrentThread();
+      GlobalJvm()->DetachCurrentThread();
     }
     LOG(FATAL) << e.what();
     return -1;
@@ -180,6 +187,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
   }
   int ret = XGDMatrixCreateFromDataIter(
       jiter, XGBoost4jCallbackDataIterNext, cache_info, &result);
+  JVM_CHECK_CALL(ret);
   if (cache_info) {
     jenv->ReleaseStringUTFChars(jcache_info, cache_info);
   }
@@ -197,6 +205,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
   DMatrixHandle result;
   const char* fname = jenv->GetStringUTFChars(jfname, 0);
   int ret = XGDMatrixCreateFromFile(fname, jsilent, &result);
+  JVM_CHECK_CALL(ret);
   if (fname) {
     jenv->ReleaseStringUTFChars(jfname, fname);
   }
@@ -217,7 +226,11 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
   jfloat* data = jenv->GetFloatArrayElements(jdata, 0);
   bst_ulong nindptr = (bst_ulong)jenv->GetArrayLength(jindptr);
   bst_ulong nelem = (bst_ulong)jenv->GetArrayLength(jdata);
-  jint ret = (jint) XGDMatrixCreateFromCSREx((size_t const *)indptr, (unsigned int const *)indices, (float const *)data, nindptr, nelem, jcol, &result);
+  jint ret = (jint) XGDMatrixCreateFromCSREx((size_t const *)indptr,
+                                             (unsigned int const *)indices,
+                                             (float const *)data,
+                                             nindptr, nelem, jcol, &result);
+  JVM_CHECK_CALL(ret);
   setHandle(jenv, jout, result);
   //Release
   jenv->ReleaseLongArrayElements(jindptr, indptr, 0);
@@ -240,7 +253,11 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
   bst_ulong nindptr = (bst_ulong)jenv->GetArrayLength(jindptr);
   bst_ulong nelem = (bst_ulong)jenv->GetArrayLength(jdata);
 
-  jint ret = (jint) XGDMatrixCreateFromCSCEx((size_t const *)indptr, (unsigned int const *)indices, (float const *)data, nindptr, nelem, jrow, &result);
+  jint ret = (jint) XGDMatrixCreateFromCSCEx((size_t const *)indptr,
+                                             (unsigned int const *)indices,
+                                             (float const *)data,
+                                             nindptr, nelem, jrow, &result);
+  JVM_CHECK_CALL(ret);
   setHandle(jenv, jout, result);
   //release
   jenv->ReleaseLongArrayElements(jindptr, indptr, 0);
@@ -249,6 +266,23 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
 
   return ret;
 }
+
+/*
+ * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
+ * Method:    XGDMatrixCreateFromMatRef
+ * Signature: (JIIF)J
+ */
+JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromMatRef
+  (JNIEnv *jenv, jclass jcls, jlong jdataRef, jint jnrow, jint jncol, jfloat jmiss, jlongArray jout) {
+  DMatrixHandle result;
+  bst_ulong nrow = (bst_ulong)jnrow;
+  bst_ulong ncol = (bst_ulong)jncol;
+  jint ret = (jint) XGDMatrixCreateFromMat((float const *)jdataRef, nrow, ncol, jmiss, &result);
+  JVM_CHECK_CALL(ret);
+  setHandle(jenv, jout, result);
+  return ret;
+}
+
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
@@ -262,13 +296,12 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
   bst_ulong nrow = (bst_ulong)jnrow;
   bst_ulong ncol = (bst_ulong)jncol;
   jint ret = (jint) XGDMatrixCreateFromMat((float const *)data, nrow, ncol, jmiss, &result);
+  JVM_CHECK_CALL(ret);
   setHandle(jenv, jout, result);
   //release
   jenv->ReleaseFloatArrayElements(jdata, data, 0);
   return ret;
 }
-
-extern void XGBAPISetLastError(const char* msg);
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
@@ -285,6 +318,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSliceDMat
 
   // default to not allowing slicing with group ID specified -- feel free to add if necessary
   jint ret = (jint) XGDMatrixSliceDMatrixEx(handle, (int const *)indexset, len, &result, 0);
+  JVM_CHECK_CALL(ret);
   setHandle(jenv, jout, result);
   //release
   jenv->ReleaseIntArrayElements(jindexset, indexset, 0);
@@ -314,6 +348,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSaveBinar
   DMatrixHandle handle = (DMatrixHandle) jhandle;
   const char* fname = jenv->GetStringUTFChars(jfname, 0);
   int ret = XGDMatrixSaveBinary(handle, fname, jsilent);
+  JVM_CHECK_CALL(ret);
   if (fname) jenv->ReleaseStringUTFChars(jfname, (const char *)fname);
   return ret;
 }
@@ -331,6 +366,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetFloatI
   jfloat* array = jenv->GetFloatArrayElements(jarray, NULL);
   bst_ulong len = (bst_ulong)jenv->GetArrayLength(jarray);
   int ret = XGDMatrixSetFloatInfo(handle, field, (float const *)array, len);
+  JVM_CHECK_CALL(ret);
   //release
   if (field) jenv->ReleaseStringUTFChars(jfield, field);
   jenv->ReleaseFloatArrayElements(jarray, array, 0);
@@ -349,26 +385,11 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetUIntIn
   jint* array = jenv->GetIntArrayElements(jarray, NULL);
   bst_ulong len = (bst_ulong)jenv->GetArrayLength(jarray);
   int ret = XGDMatrixSetUIntInfo(handle, (char const *)field, (unsigned int const *)array, len);
+  JVM_CHECK_CALL(ret);
   //release
   if (field) jenv->ReleaseStringUTFChars(jfield, (const char *)field);
   jenv->ReleaseIntArrayElements(jarray, array, 0);
 
-  return ret;
-}
-
-/*
- * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixSetGroup
- * Signature: (J[I)V
- */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetGroup
-  (JNIEnv * jenv, jclass jcls, jlong jhandle, jintArray jarray) {
-  DMatrixHandle handle = (DMatrixHandle) jhandle;
-  jint* array = jenv->GetIntArrayElements(jarray, NULL);
-  bst_ulong len = (bst_ulong)jenv->GetArrayLength(jarray);
-  int ret = XGDMatrixSetGroup(handle, (unsigned int const *)array, len);
-  //release
-  jenv->ReleaseIntArrayElements(jarray, array, 0);
   return ret;
 }
 
@@ -384,6 +405,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixGetFloatI
   bst_ulong len;
   float *result;
   int ret = XGDMatrixGetFloatInfo(handle, field, &len, (const float**) &result);
+  JVM_CHECK_CALL(ret);
   if (field) jenv->ReleaseStringUTFChars(jfield, field);
 
   jsize jlen = (jsize) len;
@@ -406,6 +428,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixGetUIntIn
   bst_ulong len;
   unsigned int *result;
   int ret = (jint) XGDMatrixGetUIntInfo(handle, field, &len, (const unsigned int **) &result);
+  JVM_CHECK_CALL(ret);
   if (field) jenv->ReleaseStringUTFChars(jfield, field);
 
   jsize jlen = (jsize) len;
@@ -425,6 +448,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixNumRow
   DMatrixHandle handle = (DMatrixHandle) jhandle;
   bst_ulong result[1];
   int ret = (jint) XGDMatrixNumRow(handle, result);
+  JVM_CHECK_CALL(ret);
   jenv->SetLongArrayRegion(jout, 0, 1, (const jlong *) result);
   return ret;
 }
@@ -447,6 +471,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterCreate
   }
   BoosterHandle result;
   int ret = XGBoosterCreate(dmlc::BeginPtr(handles), handles.size(), &result);
+  JVM_CHECK_CALL(ret);
   setHandle(jenv, jout, result);
   return ret;
 }
@@ -474,6 +499,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterSetParam
   const char* name = jenv->GetStringUTFChars(jname, 0);
   const char* value = jenv->GetStringUTFChars(jvalue, 0);
   int ret = XGBoosterSetParam(handle, name, value);
+  JVM_CHECK_CALL(ret);
   //release
   if (name) jenv->ReleaseStringUTFChars(jname, name);
   if (value) jenv->ReleaseStringUTFChars(jvalue, value);
@@ -505,6 +531,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterBoostOneI
   jfloat* hess = jenv->GetFloatArrayElements(jhess, 0);
   bst_ulong len = (bst_ulong)jenv->GetArrayLength(jgrad);
   int ret = XGBoosterBoostOneIter(handle, dtrain, grad, hess, len);
+  JVM_CHECK_CALL(ret);
   //release
   jenv->ReleaseFloatArrayElements(jgrad, grad, 0);
   jenv->ReleaseFloatArrayElements(jhess, hess, 0);
@@ -542,6 +569,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterEvalOneIt
                                  dmlc::BeginPtr(dmats),
                                  dmlc::BeginPtr(evchars),
                                  len, &result);
+  JVM_CHECK_CALL(ret);
   jstring jinfo = nullptr;
   if (result != nullptr) {
     jinfo = jenv->NewStringUTF(result);
@@ -561,7 +589,10 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterPredict
   DMatrixHandle dmat = (DMatrixHandle) jdmat;
   bst_ulong len;
   float *result;
-  int ret = XGBoosterPredict(handle, dmat, joption_mask, (unsigned int) jntree_limit, &len, (const float **) &result);
+  int ret = XGBoosterPredict(handle, dmat, joption_mask, (unsigned int) jntree_limit,
+                             /* training = */ 0,  // Currently this parameter is not supported by JVM
+                             &len, (const float **) &result);
+  JVM_CHECK_CALL(ret);
   if (len) {
     jsize jlen = (jsize) len;
     jfloatArray jarray = jenv->NewFloatArray(jlen);
@@ -582,7 +613,10 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterLoadModel
   const char* fname = jenv->GetStringUTFChars(jfname, 0);
 
   int ret = XGBoosterLoadModel(handle, fname);
-  if (fname) jenv->ReleaseStringUTFChars(jfname,fname);
+  JVM_CHECK_CALL(ret);
+  if (fname) {
+    jenv->ReleaseStringUTFChars(jfname,fname);
+  }
   return ret;
 }
 
@@ -597,7 +631,10 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterSaveModel
   const char*  fname = jenv->GetStringUTFChars(jfname, 0);
 
   int ret = XGBoosterSaveModel(handle, fname);
-  if (fname) jenv->ReleaseStringUTFChars(jfname, fname);
+  JVM_CHECK_CALL(ret);
+  if (fname) {
+    jenv->ReleaseStringUTFChars(jfname, fname);
+  }
   return ret;
 }
 
@@ -612,6 +649,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterLoadModel
   jbyte* buffer = jenv->GetByteArrayElements(jbytes, 0);
   int ret = XGBoosterLoadModelFromBuffer(
       handle, buffer, jenv->GetArrayLength(jbytes));
+  JVM_CHECK_CALL(ret);
   jenv->ReleaseByteArrayElements(jbytes, buffer, 0);
   return ret;
 }
@@ -627,6 +665,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterGetModelR
   bst_ulong len = 0;
   const char* result;
   int ret = XGBoosterGetModelRaw(handle, &len, &result);
+  JVM_CHECK_CALL(ret);
 
   if (result) {
     jbyteArray jarray = jenv->NewByteArray(len);
@@ -650,6 +689,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterDumpModel
   char **result;
 
   int ret = XGBoosterDumpModelEx(handle, fmap, jwith_stats, format, &len, (const char ***) &result);
+  JVM_CHECK_CALL(ret);
 
   jsize jlen = (jsize) len;
   jobjectArray jinfos = jenv->NewObjectArray(jlen, jenv->FindClass("java/lang/String"), jenv->NewStringUTF(""));
@@ -701,6 +741,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterDumpModel
                                              (const char **) dmlc::BeginPtr(feature_names_char),
                                              (const char **) dmlc::BeginPtr(feature_types_char),
                                              jwith_stats, format, &len, (const char ***) &result);
+  JVM_CHECK_CALL(ret);
 
   jsize jlen = (jsize) len;
   jobjectArray jinfos = jenv->NewObjectArray(jlen, jenv->FindClass("java/lang/String"), jenv->NewStringUTF(""));
@@ -723,6 +764,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterGetAttrNa
   bst_ulong len = 0;
   char **result;
   int ret = XGBoosterGetAttrNames(handle, &len, (const char ***) &result);
+  JVM_CHECK_CALL(ret);
 
   jsize jlen = (jsize) len;
   jobjectArray jinfos = jenv->NewObjectArray(jlen, jenv->FindClass("java/lang/String"), jenv->NewStringUTF(""));
@@ -746,6 +788,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterGetAttr
   const char* result;
   int success;
   int ret = XGBoosterGetAttr(handle, key, &result, &success);
+  JVM_CHECK_CALL(ret);
   //release
   if (key) jenv->ReleaseStringUTFChars(jkey, key);
 
@@ -768,6 +811,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterSetAttr
   const char* key = jenv->GetStringUTFChars(jkey, 0);
   const char* value = jenv->GetStringUTFChars(jvalue, 0);
   int ret = XGBoosterSetAttr(handle, key, value);
+  JVM_CHECK_CALL(ret);
   //release
   if (key) jenv->ReleaseStringUTFChars(jkey, key);
   if (value) jenv->ReleaseStringUTFChars(jvalue, value);
@@ -784,6 +828,7 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGBoosterLoadRabit
   BoosterHandle handle = (BoosterHandle) jhandle;
   int version;
   int ret = XGBoosterLoadRabitCheckpoint(handle, &version);
+  JVM_CHECK_CALL(ret);
   jint jversion = version;
   jenv->SetIntArrayRegion(jout, 0, 1, &jversion);
   return ret;
@@ -905,262 +950,65 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_RabitAllreduce
   return 0;
 }
 
-std::vector<gpu_column_data *> get_gpu_column_datas(JNIEnv *jenv, jclass jcls, jlongArray dataPtrs, jlongArray validPtrs,
-    jintArray dTypeIds, jlong numRows) {
-  // FIXME, Do we need to check if the size of dataPtrs/validPtrs/dTypePtrs should be same
-  int num_columns = jenv->GetArrayLength(dataPtrs);
-  if (num_columns <= 0) {
-    LOG(ERROR) << "Invalid number of columns!";
-    XGBAPISetLastError("Invalid number of columns");
-    return {};
-  }
-
-  jlong* data_jlongs = jenv->GetLongArrayElements(dataPtrs, nullptr);
-  if (data_jlongs == nullptr) {
-    LOG(ERROR) << "Failed to get data handles!";
-    XGBAPISetLastError("Failed to get data handles");
-    return {};
-  }
-  jlong* valid_jlongs = jenv->GetLongArrayElements(validPtrs, nullptr);
-  if (valid_jlongs == nullptr) {
-    jenv->ReleaseLongArrayElements(dataPtrs, data_jlongs, JNI_ABORT);
-    LOG(ERROR) << "Failed to get valid handles!";
-    XGBAPISetLastError("Failed to get valid handles");
-    return {};
-  }
-  jint* dtype_id_jints = jenv->GetIntArrayElements(dTypeIds, nullptr);
-  if (dtype_id_jints == nullptr) {
-    jenv->ReleaseLongArrayElements(dataPtrs, data_jlongs, JNI_ABORT);
-    jenv->ReleaseLongArrayElements(validPtrs, valid_jlongs, JNI_ABORT);
-    LOG(ERROR) << "Failed to get data type sizes!";
-    XGBAPISetLastError("Failed to get data type sizes");
-    return {};
-  }
-
-  std::vector<gpu_column_data *> gpu_cols;
-  for (int i = 0; i < num_columns; ++i) {
-    gpu_column_data* tmp_column = new gpu_column_data;
-    tmp_column->data_ptr = reinterpret_cast<long * > (data_jlongs[i]);
-    tmp_column->valid_ptr = reinterpret_cast<long * > (valid_jlongs[i]);
-    tmp_column->dtype_size_in_bytes = 0; // not used for building dmatrix
-    tmp_column->num_row = numRows;
-    tmp_column->type_id = dtype_id_jints[i];
-    tmp_column->null_count = 0; // not used for building dmatrix
-    gpu_cols.push_back(tmp_column);
-  }
-
-  jenv->ReleaseLongArrayElements(dataPtrs, data_jlongs, JNI_ABORT);
-  jenv->ReleaseLongArrayElements(validPtrs, valid_jlongs, JNI_ABORT);
-  jenv->ReleaseIntArrayElements(dTypeIds, dtype_id_jints, JNI_ABORT);
-
-  return gpu_cols;
+namespace xgboost {
+namespace spark {
+jint XGDeviceQuantileDMatrixCreateFromCallbackImpl(JNIEnv *jenv, jclass jcls,
+                                                   jobject jiter,
+                                                   jfloat jmissing,
+                                                   jint jmax_bin, jint jnthread,
+                                                   jlongArray jout);
 }
-
-std::vector<gpu_column_data *> get_gpu_columns_for_setinfo(JNIEnv *jenv, jclass jcls, jlongArray dataPtrs,
-    jintArray dTypeIds, jlongArray dNullCounts, jlong numRows) {
-  // FIXME, Do we need to check if the size of dataPtrs/validPtrs/dTypePtrs should be same
-  int num_columns = jenv->GetArrayLength(dataPtrs);
-  if (num_columns <= 0) {
-    LOG(ERROR) << "Invalid number of columns!";
-    XGBAPISetLastError("Invalid number of columns");
-    return {};
-  }
-
-  jlong* data_jlongs = jenv->GetLongArrayElements(dataPtrs, nullptr);
-  if (data_jlongs == nullptr) {
-    LOG(ERROR) << "Failed to get data handles!";
-    XGBAPISetLastError("Failed to get data handles");
-    return {};
-  }
-  jint* dtype_id_jints = jenv->GetIntArrayElements(dTypeIds, nullptr);
-  if (dtype_id_jints == nullptr) {
-    jenv->ReleaseLongArrayElements(dataPtrs, data_jlongs, JNI_ABORT);
-    LOG(ERROR) << "Failed to get data type sizes!";
-    XGBAPISetLastError("Failed to get data type sizes");
-    return {};
-  }
-  jlong* dnull_count_jlongs = jenv->GetLongArrayElements(dNullCounts, nullptr);
-  if (dnull_count_jlongs == nullptr) {
-    jenv->ReleaseLongArrayElements(dataPtrs, data_jlongs, JNI_ABORT);
-    jenv->ReleaseIntArrayElements(dTypeIds, dtype_id_jints, JNI_ABORT);
-    LOG(ERROR) << "Failed to get data type sizes!";
-    XGBAPISetLastError("Failed to get data type sizes");
-    return {};
-  }
-
-  std::vector<gpu_column_data *> gpu_cols;
-  for (int i = 0; i < num_columns; ++i) {
-    gpu_column_data* tmp_column = new gpu_column_data;
-    tmp_column->data_ptr = reinterpret_cast<long * > (data_jlongs[i]);
-    tmp_column->valid_ptr = reinterpret_cast<long * > (0); // not used for setinfo
-    tmp_column->dtype_size_in_bytes = 0; // not used for setinfo
-    tmp_column->num_row = numRows;
-    tmp_column->type_id = dtype_id_jints[i];
-    tmp_column->null_count = dnull_count_jlongs[i];
-    gpu_cols.push_back(tmp_column);
-  }
-
-  jenv->ReleaseLongArrayElements(dataPtrs, data_jlongs, JNI_ABORT);
-  jenv->ReleaseIntArrayElements(dTypeIds, dtype_id_jints, JNI_ABORT);
-  jenv->ReleaseLongArrayElements(dNullCounts, dnull_count_jlongs, JNI_ABORT);
-
-  return gpu_cols;
 }
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixCreateFromCUDF
- * Signature: ([J[J[IJIF[J)I
+ * Method:    XGDeviceQuantileDMatrixCreateFromCallback
+ * Signature: (Ljava/util/Iterator;FII[J)I
  */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromCUDF(JNIEnv *jenv,
-    jclass jcls, jlongArray dataPtrs, jlongArray validPtrs, jintArray dTypeIds, jlong numRows,
-    jint jgpuId, jfloat jmissing, jlongArray jout) {
-#ifdef XGBOOST_USE_CUDF
-
-  if (jenv->ExceptionOccurred()) {
-    return -1;
-  }
-
-  auto gpu_cols = get_gpu_column_datas(jenv, jcls, dataPtrs, validPtrs, dTypeIds, numRows);
-  if (gpu_cols.empty()) {
-    return -1;
-  }
-
-  DMatrixHandle dhandle;
-  int ret = XGDMatrixCreateFromCUDF(gpu_cols, &dhandle, jgpuId, jmissing);
-  for (int i = 0; i < gpu_cols.size(); i++) {
-    delete (gpu_cols[i]);
-  }
-  gpu_cols.clear();
-
-  setHandle(jenv, jout, dhandle);
-  return ret;
-#else
-  LOG(ERROR) << "XGDMatrixCreateFromCUDF: Expect CUDF but disabled!";
-  XGBAPISetLastError("CUDF is not enabled!");
-  return -1;
-#endif
+JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDeviceQuantileDMatrixCreateFromCallback
+    (JNIEnv *jenv, jclass jcls, jobject jiter, jfloat jmissing, jint jmax_bin,
+     jint jnthread, jlongArray jout) {
+  return xgboost::spark::XGDeviceQuantileDMatrixCreateFromCallbackImpl(
+      jenv, jcls, jiter, jmissing, jmax_bin, jnthread, jout);
 }
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixAppendCUDF
- * Signature: (JIF[J[J[IJ)I
+ * Method:    XGDMatrixCreateFromArrayInterfaceColumns
+ * Signature: (Ljava/lang/String;FI[J)I
  */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixAppendCUDF(JNIEnv *jenv,
-    jclass jcls, jlong jhandle, jint jgpu_ip, jfloat jmissing,
-    jlongArray dataPtrs, jlongArray validPtrs, jintArray dTypeIds, jlong numRows) {
-#ifdef XGBOOST_USE_CUDF
-  if (jenv->ExceptionOccurred()) {
-    return -1;
+JNIEXPORT jint JNICALL
+Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromArrayInterfaceColumns(
+    JNIEnv *jenv, jclass jcls, jstring jjson_columns,
+    jfloat jmissing, jint jnthread, jlongArray jout) {
+  DMatrixHandle result;
+  const char* cjson_columns = jenv->GetStringUTFChars(jjson_columns, nullptr);
+  int ret = XGDMatrixCreateFromArrayInterfaceColumns(
+      cjson_columns, jmissing, jnthread, &result);
+  JVM_CHECK_CALL(ret);
+  if (cjson_columns) {
+    jenv->ReleaseStringUTFChars(jjson_columns, cjson_columns);
   }
-
-  auto gpu_cols = get_gpu_column_datas(jenv, jcls, dataPtrs, validPtrs, dTypeIds, numRows);
-  if (gpu_cols.empty()) {
-    return -1;
-  }
-
-  int ret = XGDMatrixAppendCUDF(gpu_cols, (DMatrixHandle)jhandle, jgpu_ip, jmissing);
-  for (int i = 0; i < gpu_cols.size(); i++) {
-    delete (gpu_cols[i]);
-  }
-  gpu_cols.clear();
+  
+  setHandle(jenv, jout, result);
   return ret;
-#else
-  LOG(ERROR) << "XGDMatrixAppendCUDF: Expect CUDF but disabled!";
-    XGBAPISetLastError("CUDF is not enabled!");
-    return -1;
-#endif
 }
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixSetCUDFInfo
- * Signature: (JLjava/lang/String;I[J[I[JJ)I
+ * Method:    XGDMatrixSetInfoFromInterface
+ * Signature: (JLjava/lang/String;Ljava/lang/String;)I
  */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetCUDFInfo(JNIEnv *jenv,
-    jclass jcls, jlong jhandle, jstring jfield, jint jgpu_id,
-    jlongArray dataPtrs, jintArray dTypeIds, jlongArray nullCounts, jlong numRows) {
-#ifdef XGBOOST_USE_CUDF
+JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetInfoFromInterface
+    (JNIEnv *jenv, jclass jcls, jlong jhandle, jstring jfield, jstring jjson_columns) {
+  DMatrixHandle handle = (DMatrixHandle) jhandle;
+  const char* field = jenv->GetStringUTFChars(jfield, 0);
+  const char* cjson_columns = jenv->GetStringUTFChars(jjson_columns, 0);
 
-  if (jenv->ExceptionOccurred()) {
-    return -1;
-  }
-
-  const char* field = jenv->GetStringUTFChars(jfield, nullptr);
-  if (field == nullptr) {
-    std::string msg = "XGDMatrixSetCUDFInfo: ";
-    LOG(ERROR) << msg.append(field == nullptr ? "Null field!" : "Null Columns!");
-    XGBAPISetLastError(msg.c_str());
-    return -1;
-  }
-
-  auto gpu_cols = get_gpu_columns_for_setinfo(jenv, jcls, dataPtrs, dTypeIds, nullCounts, numRows);
-  if (gpu_cols.empty()) {
-    if (field != nullptr) {
-      jenv->ReleaseStringUTFChars(jfield, field);
-    }
-    return -1;
-  }
-
-  int ret = XGDMatrixSetCUDFInfo((DMatrixHandle)jhandle, field, gpu_cols, jgpu_id);
-  if (field != nullptr) {
-    jenv->ReleaseStringUTFChars(jfield, field);
-  }
-  for (int i = 0; i < gpu_cols.size(); i++) {
-    delete (gpu_cols[i]);
-  }
-  gpu_cols.clear();
+  int ret = XGDMatrixSetInfoFromInterface(handle, field, cjson_columns);
+  JVM_CHECK_CALL(ret);
+  //release
+  if (field) jenv->ReleaseStringUTFChars(jfield, field);
+  if (cjson_columns) jenv->ReleaseStringUTFChars(jjson_columns, cjson_columns);
   return ret;
-#else
-  LOG(ERROR) << "XGDMatrixSetCUDFInfo: Expect CUDF but disabled!";
-  XGBAPISetLastError("CUDF is not enabled!");
-  return -1;
-#endif
-}
-
-/*
- * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixAppendCUDFInfo
- * Signature: (JLjava/lang/String;I[J[I[JJ)I
- */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixAppendCUDFInfo(JNIEnv *jenv,
-    jclass jcls, jlong jhandle, jstring jfield, jint jgpu_id,
-    jlongArray dataPtrs, jintArray dTypeIds, jlongArray nullCounts, jlong numRows) {
-
-#ifdef XGBOOST_USE_CUDF
-  if (jenv->ExceptionOccurred()) {
-    return -1;
-  }
-
-  const char* field = jenv->GetStringUTFChars(jfield, nullptr);
-  if (field == nullptr) {
-    std::string msg = "XGDMatrixAppendCUDFInfo: ";
-    LOG(ERROR) << msg.append(field == nullptr ? "Null field!" : "Null Columns!");
-    XGBAPISetLastError(msg.c_str());
-    return -1;
-  }
-
-  auto gpu_cols = get_gpu_columns_for_setinfo(jenv, jcls, dataPtrs, dTypeIds, nullCounts, numRows);
-  if (gpu_cols.empty()) {
-    if (field != nullptr) {
-      jenv->ReleaseStringUTFChars(jfield, field);
-    }
-    return -1;
-  }
-
-  int ret = XGDMatrixAppendCUDFInfo((DMatrixHandle)jhandle, field, gpu_cols, jgpu_id);
-  if (field != nullptr) {
-    jenv->ReleaseStringUTFChars(jfield, field);
-  }
-  for (int i = 0; i < gpu_cols.size(); i++) {
-    delete (gpu_cols[i]);
-  }
-  gpu_cols.clear();
-  return ret;
-#else
-  LOG(ERROR) << "XGDMatrixAppendCUDFInfo: Expect CUDF but disabled!";
-  XGBAPISetLastError("CUDF is not enabled!");
-  return -1;
-#endif
 }

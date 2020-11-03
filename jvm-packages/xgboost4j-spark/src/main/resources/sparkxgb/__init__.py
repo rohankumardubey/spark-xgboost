@@ -17,4 +17,4 @@ from sparkxgb import xgboost
 from sparkxgb.xgboost import XGBoostClassifier, XGBoostRegressor, XGBoostClassificationModel, XGBoostRegressionModel
 
 __all__ = ["XGBoostClassifier", "XGBoostRegressor", "XGBoostClassificationModel", "XGBoostRegressionModel"]
-__version__ = "1.0.0"
+__version__ = "1.3.0"

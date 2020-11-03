@@ -1,5 +1,5 @@
 #######################################
-XGBoost4J-Spark Tutorial (version 0.8+)
+XGBoost4J-Spark Tutorial (version 0.9+)
 #######################################
 
 **XGBoost4J-Spark** is a project aiming to seamlessly integrate XGBoost and Apache Spark by fitting XGBoost to Apache Spark's MLLIB framework. With the integration, user can not only uses the high-performant algorithm implementation of XGBoost, but also leverages the powerful  data processing engine of Spark for:
@@ -16,6 +16,12 @@ This tutorial is to cover the end-to-end process to build a machine learning pip
 * Building a Machine Learning Pipeline with XGBoost4J-Spark
 * Running XGBoost4J-Spark in Production
 
+.. note::
+
+  **SparkContext will be stopped by default when XGBoost training task fails**.
+
+  XGBoost4J-Spark 1.2.0+ exposes a parameter **kill_spark_context_on_worker_failure**. Set **kill_spark_context_on_worker_failure** to **false** so that the SparkContext will not be stopping on training failure. Instead of stopping the SparkContext, XGBoost4J-Spark will throw an exception instead. Users who want to re-use the SparkContext should wrap the training code in a try-catch block.
+
 .. contents::
   :backlinks: none
   :local:
@@ -27,39 +33,7 @@ Build an ML Application with XGBoost4J-Spark
 Refer to XGBoost4J-Spark Dependency
 ===================================
 
-Before we go into the tour of how to use XGBoost4J-Spark, we would bring a brief introduction about how to build a machine learning application with XGBoost4J-Spark. The first thing you need to do is to refer to the dependency in Maven Central.
-
-You can add the following dependency in your ``pom.xml``.
-
-.. code-block:: xml
-
-  <dependency>
-    <groupId>ml.dmlc</groupId>
-    <artifactId>xgboost4j-spark</artifactId>
-    <version>latest_version_num</version>
-  </dependency>
-
-For the latest release version number, please check `here <https://github.com/dmlc/xgboost/releases>`_.
-
-We also publish some functionalities which would be included in the coming release in the form of snapshot version. To access these functionalities, you can add dependency to the snapshot artifacts. We publish snapshot version in github-based repo, so you can add the following repo in ``pom.xml``:
-
-.. code-block:: xml
-
-  <repository>
-    <id>XGBoost4J-Spark Snapshot Repo</id>
-    <name>XGBoost4J-Spark Snapshot Repo</name>
-    <url>https://raw.githubusercontent.com/CodingCat/xgboost/maven-repo/</url>
-  </repository>
-
-and then refer to the snapshot dependency by adding:
-
-.. code-block:: xml
-
-  <dependency>
-      <groupId>ml.dmlc</groupId>
-      <artifactId>xgboost4j-spark</artifactId>
-      <version>next_version_num-SNAPSHOT</version>
-  </dependency>
+Before we go into the tour of how to use XGBoost4J-Spark, you should first consult :ref:`Installation from Maven repository <install_jvm_packages>` in order to add XGBoost4J-Spark as a dependency for your project. We provide both stable releases and snapshots.
 
 .. note:: XGBoost4J-Spark requires Apache Spark 2.4+
 
@@ -139,7 +113,7 @@ we drop the column "class" and only keeps the feature columns and the transforme
 
 The ``fit`` and ``transform`` are two key operations in MLLIB. Basically, ``fit`` produces a "transformer", e.g. StringIndexer, and each transformer applies ``transform`` method on DataFrame to add new column(s) containing transformed features/labels or prediction results, etc. To understand more about ``fit`` and ``transform``, You can find more details in `here <http://spark.apache.org/docs/latest/ml-pipeline.html#pipeline-components>`_.
 
-Similarly, we can use another transformer, `VectorAssembler <https://spark.apache.org/docs/2.3.1/api/scala/index.html#org.apache.spark.ml.feature.VectorAssembler>`_, to assemble feature columns "sepal length", "sepal width", "petal length" and "petal width" as a vector.
+Similarly, we can use another transformer, `VectorAssembler <https://spark.apache.org/docs/2.4.0/api/java/org/apache/spark/ml/feature/VectorAssembler.html>`_, to assemble feature columns "sepal length", "sepal width", "petal length" and "petal width" as a vector.
 
 .. code-block:: scala
 
@@ -156,24 +130,9 @@ labels. A DataFrame like this (containing vector-represented features and numeri
 Dealing with missing values
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Strategies to handle missing values (and therefore overcome issues as above):
-
-In the case that a feature column contains missing values for any reason (could be related to business logic / wrong data ingestion process / etc.), the user should decide on a strategy of how to handle it. 
-The choice of approach depends on the value representing 'missing' which fall into four different categories:
-
-1. 0
-2. NaN
-3. Null
-4. Any other value which is not mentioned in (1) / (2) / (3)
-
-We introduce the following approaches dealing with missing value and their fitting scenarios:
-
-1. Skip VectorAssembler (using setHandleInvalid = "skip") directly. Used in (2), (3).
-2. Keep it (using setHandleInvalid = "keep"), and set the "missing" parameter in XGBClassifier/XGBRegressor as the value representing missing. Used in (2) and (4).
-3. Keep it (using setHandleInvalid = "keep") and transform to other irregular values. Used in (3).
-4. Nothing to be done, used in (1). 
-
-Then, XGBoost will automatically learn what's the ideal direction to go when a value is missing, based on that value and strategy.
+XGBoost supports missing values by default (`as desribed here <https://xgboost.readthedocs.io/en/latest/faq.html#how-to-deal-with-missing-value>`_).
+If given a SparseVector, XGBoost will treat any values absent from the SparseVector as missing. You are also able to
+specify to XGBoost to treat a specific value in your Dataset as if it was a missing value. By default XGBoost will treat NaN as the value representing missing.
 
 Example of setting a missing value (e.g. -999) to the "missing" parameter in XGBoostClassifier:
 
@@ -190,11 +149,39 @@ Example of setting a missing value (e.g. -999) to the "missing" parameter in XGB
         setFeaturesCol("features").
         setLabelCol("classIndex")
 
-.. note:: Using 0 to represent meaningful value
+.. note:: Missing values with Spark's VectorAssembler
 
-  Due to the fact that Spark's VectorAssembler transformer only accepts 0 as a missing values, this one creates a problem when the user has 0 as meaningful value plus there are enough 0's to use SparseVector (However, In case the dataset is represented by a DenseVector, the 0 is kept)
+  If given a Dataset with enough features having a value of 0 Spark's VectorAssembler transformer class will return a
+  SparseVector where the absent values are meant to indicate a value of 0. This conflicts with XGBoost's default to
+  treat values absent from the SparseVector as missing. The model would effectively be
+  treating 0 as missing but not declaring that to be so which can lead to confusion when using the trained model on
+  other platforms. To avoid this, XGBoost will raise an exception if it receives a SparseVector and the "missing"
+  parameter has not been explicitly set to 0. To workaround this issue the user has three options:
 
-  In this case, users are also supposed to transform 0 to some other values to avoid the issue.
+  1. Explicitly convert the Vector returned from VectorAssembler to a DenseVector to return the zeros to the dataset. If
+  doing this with missing values encoded as NaN, you will want to set ``setHandleInvalid = "keep"`` on VectorAssembler
+  in order to keep the NaN values in the dataset. You would then set the "missing" parameter to whatever you want to be
+  treated as missing. However this may cause a large amount of memory use if your dataset is very sparse.
+
+  2. Before calling VectorAssembler you can transform the values you want to represent missing into an irregular value
+  that is not 0, NaN, or Null and set the "missing" parameter to 0. The irregular value should ideally be chosen to be
+  outside the range of values that your features have.
+
+  3. Do not use the VectorAssembler class and instead use a custom way of constructing a SparseVector that allows for
+  specifying sparsity to indicate a non-zero value. You can then set the "missing" parameter to whatever sparsity
+  indicates in your Dataset. If this approach is taken you can pass the parameter
+  ``"allow_non_zero_for_missing_value" -> true`` to bypass XGBoost's assertion that "missing" must be zero when given a
+  SparseVector.
+
+  Option 1 is recommended if memory constraints are not an issue. Option 3 requires more work to get set up but is
+  guaranteed to give you correct results while option 2 will be quicker to set up but may be difficult to find a good
+  irregular value that does not conflict with your feature values.
+
+.. note:: Using a non-default missing value when using other bindings of XGBoost.
+
+  When XGBoost is saved in native format only the booster itself is saved, the value of the missing parameter is not
+  saved alongside the model. Thus, if a non-default missing parameter is used to train the model in Spark the user should
+  take care to use the same missing parameter when using the saved model in another binding.
 
 Training
 ========
@@ -241,7 +228,7 @@ Early stopping is a feature to prevent the unnecessary training iterations. By s
 
 When it comes to custom eval metrics, in additional to ``num_early_stopping_rounds``, you also need to define ``maximize_evaluation_metrics`` or call ``setMaximizeEvaluationMetrics`` to specify whether you want to maximize or minimize the metrics in training. For built-in eval metrics, XGBoost4J-Spark will automatically select the direction.
 
-For example, we need to maximize the evaluation metrics (set ``maximize_evaluation_metrics`` with true), and set ``num_early_stopping_rounds`` with 5. The evaluation metric of 10th iteration is the maximum one until now. In the following iterations, if there is no evaluation metric greater than the 10th iteration's (best one), the traning would be early stopped at 15th iteration.  
+For example, we need to maximize the evaluation metrics (set ``maximize_evaluation_metrics`` with true), and set ``num_early_stopping_rounds`` with 5. The evaluation metric of 10th iteration is the maximum one until now. In the following iterations, if there is no evaluation metric greater than the 10th iteration's (best one), the traning would be early stopped at 15th iteration.
 
 Training with Evaluation Sets
 -----------------------------

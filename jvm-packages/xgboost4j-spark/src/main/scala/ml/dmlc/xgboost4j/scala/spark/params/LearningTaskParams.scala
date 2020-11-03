@@ -81,6 +81,13 @@ private[spark] trait LearningTaskParams extends Params {
     "whether caching training data")
 
   /**
+   * whether cleaning checkpoint, always cleaning by default, having this parameter majorly for
+   * testing
+   */
+  final val skipCleanCheckpoint = new BooleanParam(this, "skipCleanCheckpoint",
+    "whether cleaning checkpoint data")
+
+  /**
    * If non-zero, the training will be stopped after a specified number
    * of consecutive increases in any evaluation metric.
    */
@@ -98,8 +105,14 @@ private[spark] trait LearningTaskParams extends Params {
 
   final def getMaximizeEvaluationMetrics: Boolean = $(maximizeEvaluationMetrics)
 
-  setDefault(objective -> "reg:squarederror", baseScore -> 0.5,
-    numEarlyStoppingRounds -> 0, cacheTrainingSet -> false)
+  /**
+   * whether killing SparkContext when training task fails
+   */
+  final val killSparkContextOnWorkerFailure = new BooleanParam(this,
+    "killSparkContextOnWorkerFailure", "whether killing SparkContext when training task fails")
+
+  setDefault(objective -> "reg:squarederror", baseScore -> 0.5, trainTestRatio -> 1.0,
+    numEarlyStoppingRounds -> 0, cacheTrainingSet -> false, killSparkContextOnWorkerFailure -> true)
 }
 
 private[spark] object LearningTaskParams {

@@ -17,7 +17,6 @@
 package ml.dmlc.xgboost4j.scala.spark.rapids
 
 import ai.rapids.cudf.DType
-import ml.dmlc.xgboost4j.scala.spark.rapids.RowConverter.StringConverter
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.Row
@@ -25,7 +24,7 @@ import org.apache.spark.sql.catalyst.expressions.GenericRowWithSchema
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.catalyst.util.DateTimeConstants._
 
-private[xgboost4j] class RowConverter(schema: StructType, timeUnits: Seq[DType]) {
+class RowConverter(schema: StructType, timeUnits: Seq[DType]) {
   private val converters = schema.fields.map {
     f => RowConverter.getConverterForType(f.dataType)
   }
@@ -45,7 +44,7 @@ private[xgboost4j] class RowConverter(schema: StructType, timeUnits: Seq[DType])
   }
 }
 
-private[xgboost4j] object RowConverter {
+object RowConverter {
   private abstract class TypeConverter {
     final def convert(row: InternalRow, column: Int, timeUnits: Seq[DType]): Any = {
       if (row.isNullAt(column)) null else convertImpl(row, column, timeUnits)
@@ -58,17 +57,10 @@ private[xgboost4j] object RowConverter {
     }
   }
 
-  def isSupportingType(dataType: DataType): Boolean = {
+  def isSupportedType(dataType: DataType): Boolean = {
     dataType match {
-      case BooleanType => true
-      case ByteType => true
-      case ShortType => true
-      case IntegerType => true
-      case FloatType => true
-      case LongType => true
-      case DoubleType => true
-      case DateType => true
-      case TimestampType => true
+      case _: BooleanType | ByteType | ShortType | IntegerType | FloatType |
+              LongType | DoubleType | DateType | TimestampType => true
       case _ => false
     }
   }
@@ -88,11 +80,6 @@ private[xgboost4j] object RowConverter {
       case unknown => throw new UnsupportedOperationException(
         s"Type $unknown not supported")
     }
-  }
-
-  private object StringConverter extends TypeConverter {
-    override def convertImpl(row: InternalRow, column: Int): Any =
-      row.getString(column)
   }
 
   private object BooleanConverter extends TypeConverter {
@@ -133,6 +120,11 @@ private[xgboost4j] object RowConverter {
   private object DateConverter extends TypeConverter {
     override def convertImpl(row: InternalRow, column: Int): Any =
       DateTimeUtils.toJavaDate(row.getInt(column))
+  }
+
+  private object StringConverter extends TypeConverter {
+    override def convertImpl(row: InternalRow, column: Int): Any =
+      row.getString(column)
   }
 
   private object TimestampConverter extends TypeConverter {

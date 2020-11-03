@@ -16,8 +16,8 @@
 
 package ml.dmlc.xgboost4j.scala.spark.params
 
-import org.json4s.{JValue, JsonInput}
 import org.json4s.jackson.JsonMethods
+import org.json4s.{JValue, JsonInput}
 
 // The wrapper of some methods of Jason4s for compatibility issue
 private[spark] object JasonWrapper {

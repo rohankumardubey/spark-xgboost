@@ -3,10 +3,11 @@
  * \file sparse_page_lz4_format.cc
  *  XGBoost Plugin to enable LZ4 compressed format on the external memory pages.
  */
+#include <dmlc/registry.h>
+
 #include <xgboost/data.h>
 #include <xgboost/logging.h>
-#include <dmlc/registry.h>
-#include <dmlc/parameter.h>
+#include <xgboost/parameter.h>
 #include <lz4.h>
 #include <lz4hc.h>
 #include "../../src/data/sparse_page_writer.h"
@@ -155,7 +156,7 @@ inline void CompressArray<DType>::Write(dmlc::Stream* fo) {
 }
 
 template<typename StorageIndex>
-class SparsePageLZ4Format : public SparsePageFormat {
+class SparsePageLZ4Format : public SparsePageFormat<SparsePage> {
  public:
   explicit SparsePageLZ4Format(bool use_lz4_hc)
       : use_lz4_hc_(use_lz4_hc) {

@@ -13,13 +13,13 @@
  See the License for the specific language governing permissions and
  limitations under the License.
  */
-
 package ml.dmlc.xgboost4j.java;
 
+import ai.rapids.cudf.ColumnVector;
 import ai.rapids.cudf.Cuda;
-import ml.dmlc.xgboost4j.java.rapids.GpuColumnVectorUtils;
 import ai.rapids.cudf.Table;
 import ml.dmlc.xgboost4j.java.rapids.ColumnData;
+import ml.dmlc.xgboost4j.java.spark.rapids.GpuColumnBatch;
 
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
 import org.apache.spark.unsafe.Platform;
@@ -34,26 +34,24 @@ import static org.junit.Assume.assumeTrue;
  * Test cases for XGBoostSparkJNI
  */
 public class XGBoostSparkJNITest {
+
   @Test
   public void testSimpleBuildUnsafeRows() {
     assumeTrue(Cuda.isEnvCompatibleForTesting());
 
-    try (Table table = new Table.TestBuilder()
-      .column(null, 1, 3, 5)
-      .column(2L, 4L, null, 8L)
-      .column(20.0f, null, null, null)
-      .column((short) 200, (short) 150, (short) 100, (short) 25)
-      .build()) {
+    final int numColumns = 4;
+    try (ColumnVector v0 = ColumnVector.fromBoxedInts(null, 1, 3, 5);
+         ColumnVector v1 = ColumnVector.fromBoxedLongs(2L, 4L, null, 8L);
+         ColumnVector v2 = ColumnVector.fromBoxedFloats(20.0f, null, null, null);
+         ColumnVector v3 = ColumnVector.fromShorts((short)200, (short)150, (short)100, (short)25)) {
 
-      final int numColumns = 4;
       final int rowSize = UnsafeRow.calculateBitSetWidthInBytes(numColumns)
-        + numColumns * 8;
+          + numColumns * 8;
       long rawUnsafeRowData = 0;
+      GpuColumnBatch columnBatch = null;
       try {
-        ColumnData[] cds = new ColumnData[numColumns];
-        for (int i = 0; i < table.getNumberOfColumns(); i++) {
-          cds[i] = GpuColumnVectorUtils.getColumnData(table.getColumn(i));
-        }
+        columnBatch = new GpuColumnBatch(new Table(v0, v1, v2, v3), null);
+        ColumnData[] cds = columnBatch.getAsColumnData(0, 1, 2, 3);
         rawUnsafeRowData = XGBoostSparkJNI.buildUnsafeRows(cds);
         assertTrue(rawUnsafeRowData != 0);
         UnsafeRow row = new UnsafeRow(4);
@@ -100,8 +98,14 @@ public class XGBoostSparkJNITest {
         if (rawUnsafeRowData != 0) {
           Platform.freeMemory(rawUnsafeRowData);
         }
+        if (columnBatch != null) {
+          try {
+            columnBatch.close();
+          } catch (Exception e) {
+            e.printStackTrace();
+          }
+        }
       }
     }
   }
-
 }

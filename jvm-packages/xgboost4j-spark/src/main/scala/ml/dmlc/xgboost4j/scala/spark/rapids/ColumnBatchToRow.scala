@@ -24,17 +24,18 @@ import org.apache.spark.sql.catalyst.expressions.UnsafeRow
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.unsafe.Platform
 
-class ColumnBatchToRow {
+private[rapids] class ColumnBatchToRow(rowSchema: StructType) {
   private var batches: Seq[ColumnBatchIter] = Seq()
   private lazy val batchIter = batches.toIterator
-  private var currentBatchIter: ColumnBatchIter = null
+  private var currentBatchIter: ColumnBatchIter = _
+  private var info: ColumnToRowInfo = _
 
-  def appendColumnBatch(batch: GpuColumnBatch, colNameToBuild: Option[String] = None): Unit = {
-    batches = batches :+ new ColumnBatchIter(batch, colNameToBuild)
+  def appendColumnBatch(batch: GpuColumnBatch): this.type = {
+    batches = batches :+ new ColumnBatchIter(batch, initAndCheck(batch))
+    this
   }
 
-  private[xgboost4j] def toIterator: Iterator[Row] = {
-    val taskContext = TaskContext.get
+  def toIterator: Iterator[Row] = {
     val iter = new Iterator[Row] with AutoCloseable {
 
       override def hasNext: Boolean = {
@@ -53,7 +54,7 @@ class ColumnBatchToRow {
 
       private def nextIterator(): Boolean = {
         if (batchIter.hasNext) {
-          close
+          close()
           currentBatchIter = batchIter.next()
           try {
             hasNext
@@ -64,40 +65,68 @@ class ColumnBatchToRow {
         }
       }
     }
-    taskContext.addTaskCompletionListener[Unit](_ => iter.close())
+    TaskContext.get.addTaskCompletionListener[Unit](_ => iter.close())
     iter
   }
 
-  class ColumnBatchIter(batch: GpuColumnBatch, colNameToBuild: Option[String] = None) extends
-      Iterator[Row] with AutoCloseable {
-    val rawSchema = batch.getSchema
-    val schema = colNameToBuild.map(name => StructType(rawSchema.fields.filter(x =>
-        RowConverter.isSupportingType(x.dataType) && x.name.equals(name))))
-      .getOrElse(StructType(
-        rawSchema.fields.filter(x => RowConverter.isSupportingType(x.dataType))))
+  private def initAndCheck(batch: GpuColumnBatch): ColumnToRowInfo = {
+    val origSchema = batch.getSchema
+    if (info == null) {
+      // check schema relationship
+      require(rowSchema.nonEmpty && rowSchema.forall(origSchema.contains(_)))
+      // Indices of column to be converted to row
+      val indicesToRow = rowSchema.names.map(origSchema.fieldIndex)
+      // row shape
+      // number of columns to be converted to row
+      val numColsToRow = rowSchema.length
+      val rowSize = UnsafeRow.calculateBitSetWidthInBytes(numColsToRow) + numColsToRow * 8
+      // row parser and converter
+      val row = new UnsafeRow(numColsToRow)
+      val converter = new RowConverter(rowSchema,
+        indicesToRow.map(batch.getColumnVector(_).getType()))
 
-    // schema name maps to index of schema
-    val nameToIndex = schema.names.map(rawSchema.fieldIndex)
+      // Finally create the info
+      info = new ColumnToRowInfo(batch.getNumRows, indicesToRow, rowSize, row, converter,
+        origSchema)
+    } else {
+      if (!origSchema.equals(info.origSchema)) {
+        // All the column batches added to a ColumnBatchToRow should have the same schema.
+        throw new RuntimeException(s"Schema of GpuColumnBatch at [${batches.length}]" +
+          s" diverges from the first one.")
+      }
+    }
+    info
+  }
 
-    val timeUnits = nameToIndex.map(batch.getColumnVector(_).getType())
+  private class ColumnToRowInfo(
+    val numRows: Long,
+    val indicesToRow: Array[Int],
+    val rowSize: Int,
+    val rowParser: UnsafeRow,
+    val converter: RowConverter,
+    private[ColumnBatchToRow] val origSchema: StructType)
 
-    private val numRows = batch.getNumRows
-    private val converter = new RowConverter(schema, timeUnits)
-    private val rowSize = UnsafeRow.calculateBitSetWidthInBytes(schema.length) +
-      schema.length * 8
-    private var buffer: Long = initBuffer()
+
+  // Iterator to iterate one single GpuColmunBatch
+  private class ColumnBatchIter(batch: GpuColumnBatch, info: ColumnToRowInfo)
+      extends Iterator[Row] with AutoCloseable {
     private var nextRow = 0
-    private val row = new UnsafeRow(schema.length)
+    private var buffer = initBuffer()
 
-    override def hasNext: Boolean = nextRow < numRows
+    private def initBuffer(): Long = {
+      val colDatas = batch.getAsColumnData(info.indicesToRow: _*)
+      XGBoostSparkJNI.buildUnsafeRows(colDatas: _*)
+    }
+
+    override def hasNext: Boolean = nextRow < info.numRows
 
     override def next(): Row = {
-      if (nextRow >= numRows) {
+      if (nextRow >= info.numRows) {
         throw new NoSuchElementException
       }
-      row.pointTo(null, buffer + rowSize * nextRow, rowSize)
+      info.rowParser.pointTo(null, buffer + info.rowSize * nextRow, info.rowSize)
       nextRow += 1
-      converter.toExternalRow(row)
+      info.converter.toExternalRow(info.rowParser)
     }
 
     override def close(): Unit = {
@@ -106,10 +135,24 @@ class ColumnBatchToRow {
         buffer = 0
       }
     }
+  }
+}
 
-    private def initBuffer(): Long = {
-      val colDatas = batch.getAsColumnData(nameToIndex: _*)
-      XGBoostSparkJNI.buildUnsafeRows(colDatas: _*)
+private[rapids] object ColumnBatchToRow {
+
+  def buildRowSchema(origSchema: StructType, toRowColNames: Seq[String],
+    buildAllColumns: Boolean = true): StructType = {
+    if (toRowColNames.nonEmpty) {
+      val rowSchema = origSchema(toRowColNames.toSet)
+      require(rowSchema.forall(f => RowConverter.isSupportedType(f.dataType)))
+      rowSchema
+    } else {
+      if (buildAllColumns) {
+        origSchema
+      } else {
+        val rowFields = origSchema.filter(f => RowConverter.isSupportedType(f.dataType))
+        StructType(rowFields)
+      }
     }
   }
 }

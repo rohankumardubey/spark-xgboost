@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import errno
+import argparse
 import glob
 import os
 import shutil
@@ -7,7 +8,6 @@ import subprocess
 import sys
 from contextlib import contextmanager
 from cudautils import cudaver
-
 
 # Monkey-patch the API inconsistency between Python2.X and 3.X.
 if sys.platform.startswith("linux"):
@@ -22,8 +22,8 @@ CONFIG = {
 
     "USE_CUDA": "ON",
     "USE_NCCL": "ON",
-    "USE_CUDF": "ON",
-    "JVM_BINDINGS": "ON"
+    "JVM_BINDINGS": "ON",
+    "LOG_CAPI_INVOCATION": "OFF",
 }
 
 
@@ -71,6 +71,11 @@ def normpath(path):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--log-capi-invocation', type=str, choices=['ON', 'OFF'], default='OFF')
+    parser.add_argument('--use-cuda', type=str, choices=['ON', 'OFF'], default='OFF')
+    cli_args = parser.parse_args()
+
     if sys.platform == "darwin":
         # Enable of your compiler supports OpenMP.
         CONFIG["USE_OPENMP"] = "OFF"
@@ -84,7 +89,7 @@ if __name__ == "__main__":
         with cd("build"):
             if sys.platform == "win32":
                 # Force x64 build on Windows.
-                maybe_generator = ' -G"Visual Studio 14 Win64"'
+                maybe_generator = ' -A x64'
             else:
                 maybe_generator = ""
             if sys.platform == "linux":
@@ -92,7 +97,24 @@ if __name__ == "__main__":
             else:
                 maybe_parallel_build = ""
 
+            if cli_args.log_capi_invocation == 'ON':
+                CONFIG['LOG_CAPI_INVOCATION'] = 'ON'
+
+            if cli_args.use_cuda == 'ON':
+                CONFIG['USE_CUDA'] = 'ON'
+                CONFIG['USE_NCCL'] = 'ON'
+
             args = ["-D{0}:BOOL={1}".format(k, v) for k, v in CONFIG.items()]
+
+            # if enviorment set rabit_mock
+            if os.getenv("RABIT_MOCK", None) is not None:
+                args.append("-DRABIT_MOCK:BOOL=ON")
+
+            # if enviorment set GPU_ARCH_FLAG
+            gpu_arch_flag = os.getenv("GPU_ARCH_FLAG", None)
+            if gpu_arch_flag is not None:
+                args.append("%s" % gpu_arch_flag)
+
             run("cmake .. " + " ".join(args) + maybe_generator)
             run("cmake --build . --config Release" + maybe_parallel_build)
 
@@ -106,9 +128,8 @@ if __name__ == "__main__":
         "darwin": "libxgboost4j.dylib",
         "linux": "libxgboost4j.so"
     }[sys.platform]
-    lib_path = "xgboost4j/src/main/resources/lib/" + cuda
-    maybe_makedirs(lib_path)
-    cp("../lib/" + library_name, lib_path)
+    maybe_makedirs("xgboost4j/src/main/resources/lib/" + cuda)
+    cp("../lib/" + library_name, "xgboost4j/src/main/resources/lib/" + cuda)
 
     print("copying pure-Python tracker")
     cp("../dmlc-core/tracker/dmlc_tracker/tracker.py",
@@ -124,3 +145,7 @@ if __name__ == "__main__":
         cp(file, "xgboost4j-spark/src/test/resources")
     for file in glob.glob("../demo/data/agaricus.*"):
         cp(file, "xgboost4j-spark/src/test/resources")
+
+    maybe_makedirs("xgboost4j/src/test/resources")
+    for file in glob.glob("../demo/data/agaricus.*"):
+        cp(file, "xgboost4j/src/test/resources")

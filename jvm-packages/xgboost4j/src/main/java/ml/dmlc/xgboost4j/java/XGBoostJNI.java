@@ -1,10 +1,10 @@
 /*
- Copyright (c) 2014 by Contributors 
+ Copyright (c) 2014 by Contributors
 
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
  You may obtain a copy of the License at
-    
+
  http://www.apache.org/licenses/LICENSE-2.0
 
  Unless required by applicable law or agreed to in writing, software
@@ -19,7 +19,8 @@ import java.nio.ByteBuffer;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import ml.dmlc.xgboost4j.java.rapids.ColumnData;
+
+import ml.dmlc.xgboost4j.java.rapids.ColumnBatch;
 
 /**
  * xgboost JNI functions
@@ -32,7 +33,6 @@ class XGBoostJNI {
 
   static {
     try {
-      logger.info("load XGBoost libs");
       NativeLibLoader.initXGBoost();
     } catch (Exception ex) {
       logger.error("Failed to load native library", ex);
@@ -67,6 +67,9 @@ class XGBoostJNI {
   public final static native int XGDMatrixCreateFromMat(float[] data, int nrow, int ncol,
                                                         float missing, long[] out);
 
+  public final static native int XGDMatrixCreateFromMatRef(long dataRef, int nrow, int ncol,
+                                                           float missing, long[] out);
+
   public final static native int XGDMatrixSliceDMatrix(long handle, int[] idxset, long[] out);
 
   public final static native int XGDMatrixFree(long handle);
@@ -76,8 +79,6 @@ class XGBoostJNI {
   public final static native int XGDMatrixSetFloatInfo(long handle, String field, float[] array);
 
   public final static native int XGDMatrixSetUIntInfo(long handle, String field, int[] array);
-
-  public final static native int XGDMatrixSetGroup(long handle, int[] group);
 
   public final static native int XGDMatrixGetFloatInfo(long handle, String field, float[][] info);
 
@@ -135,84 +136,11 @@ class XGBoostJNI {
   final static native int RabitAllreduce(ByteBuffer sendrecvbuf, int count,
                                                 int enum_dtype, int enum_op);
 
-  public final static int XGDMatrixCreateFromCUDF(int gpuId, float missing, long[] out,
-      final ColumnData... cds) {
-    if (cds == null || cds.length <= 0) return 0;
-    long[] dataPtrs = new long[cds.length];
-    long[] validPtrs = new long[cds.length];
-    int[] typIds = new int[cds.length];
-    int i = 0;
-    for (ColumnData cd : cds) {
-      dataPtrs[i] = cd.getDataPtr();
-      validPtrs[i] = cd.getValidPtr();
-      typIds[i] = cd.getTypeId();
-      i++;
-    }
-    return XGDMatrixCreateFromCUDF(dataPtrs, validPtrs, typIds, cds[0].getShape(), gpuId, missing,
-      out);
-  }
+  public final static native int XGDMatrixCreateFromArrayInterfaceColumns(
+    String columnJosn, float missing, int nthread, long[] out);
+  public final static native int XGDMatrixSetInfoFromInterface(
+    long handle, String field, String json);
 
-  // CUDF support: Suppose gpu columns are passed as array of native handles
-  private final static native int XGDMatrixCreateFromCUDF(long[] dataPtrs, long[] validPtrs,
-    int[] typeIds, long rows, int gpuId, float missing, long[] out);
-
-  private final static native int XGDMatrixAppendCUDF(long handle, int gpuId, float missing,
-    long[] dataPtrs, long[] validPtrs, int[] typeIds, long rows);
-
-  private final static native int XGDMatrixSetCUDFInfo(long handle, String field, int gpuId,
-    long[] dataPtrs, int[] typeIds, long[] nullCounts, long rows);
-
-  private final static native int XGDMatrixAppendCUDFInfo(long handle, String field, int gpuId,
-    long[] dataPtrs, int[] typeIds, long[] nullCounts, long rows);
-
-  public final static int XGDMatrixAppendCUDF(long handle, int gpuId, float missing,
-      final ColumnData ... cds) {
-    if (cds == null || cds.length <= 0) return 0;
-    long[] dataPtrs = new long[cds.length];
-    long[] validPtrs = new long[cds.length];
-    int[] typIds = new int[cds.length];
-    int i = 0;
-    for (ColumnData cd : cds) {
-      dataPtrs[i] = cd.getDataPtr();
-      validPtrs[i] = cd.getValidPtr();
-      typIds[i] = cd.getTypeId();
-      i++;
-    }
-    return XGDMatrixAppendCUDF(handle, gpuId, missing, dataPtrs, validPtrs, typIds,
-      cds[0].getShape());
-  }
-
-  public final static int XGDMatrixSetCUDFInfo(long handle, String field, int gpuId,
-      final ColumnData ... cds) {
-    if (cds == null || cds.length <= 0) return 0;
-    long[] dataPtrs = new long[cds.length];
-    int[] typIds = new int[cds.length];
-    long[] nullCounts = new long[cds.length];
-    int i = 0;
-    for (ColumnData cd : cds) {
-      dataPtrs[i] = cd.getDataPtr();
-      typIds[i] = cd.getTypeId();
-      nullCounts[i] = cd.getNullCount();
-      i++;
-    }
-    return XGDMatrixSetCUDFInfo(handle, field, gpuId, dataPtrs, typIds, nullCounts,
-      cds[0].getShape());
-  }
-
-  public final static int XGDMatrixAppendCUDFInfo(long handle, String field, int gpuId,
-      final ColumnData ... cds) {
-    if (cds == null || cds.length <= 0) return 0;
-    long[] dataPtrs = new long[cds.length];
-    int[] typIds = new int[cds.length];
-    long[] nullCounts = new long[cds.length];
-    int i = 0;
-    for (ColumnData cd : cds) {
-      dataPtrs[i] = cd.getDataPtr();
-      typIds[i] = cd.getTypeId();
-      nullCounts[i] = cd.getNullCount();
-      i++;
-    }
-    return XGDMatrixAppendCUDFInfo(handle, field, gpuId, dataPtrs, typIds, nullCounts,
-      cds[0].getShape());
-  }
+  public final static native int XGDeviceQuantileDMatrixCreateFromCallback(
+    java.util.Iterator<ColumnBatch> iter, float missing, int nthread, int maxBin, long[] out);
 }

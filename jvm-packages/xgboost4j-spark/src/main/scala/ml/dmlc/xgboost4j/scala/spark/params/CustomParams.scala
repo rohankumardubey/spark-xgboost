@@ -16,11 +16,10 @@
 
 package ml.dmlc.xgboost4j.scala.spark.params
 
-import ml.dmlc.xgboost4j.scala.spark.params.JasonWrapper._
 import ml.dmlc.xgboost4j.scala.{EvalTrait, ObjectiveTrait}
 import ml.dmlc.xgboost4j.scala.spark.TrackerConf
 import org.json4s.{DefaultFormats, Extraction, NoTypeHints}
-import org.json4s.jackson.JsonMethods.{compact, render}
+import org.json4s.jackson.JsonMethods.{compact, parse, render}
 
 import org.apache.spark.ml.param.{Param, ParamPair, Params}
 import org.apache.spark.sql.DataFrame
@@ -83,21 +82,5 @@ class TrackerConfParam(
     implicit val formats = DefaultFormats
     val parsedValue = parse(json)
     parsedValue.extract[TrackerConf]
-  }
-}
-
-class SeqStringParam(
-    parent: Params,
-    name: String,
-    doc: String) extends Param[Seq[String]](parent, name, doc) {
-
-  override def jsonEncode(value: Seq[String]): String = {
-    import org.json4s.JsonDSL._
-    compact(render(value))
-  }
-
-  override def jsonDecode(json: String): Seq[String] = {
-    implicit val formats = DefaultFormats
-    parse(json).extract[Seq[String]]
   }
 }

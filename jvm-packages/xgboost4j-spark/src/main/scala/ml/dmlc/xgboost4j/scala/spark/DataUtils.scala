@@ -16,17 +16,16 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
-import ai.rapids.cudf.Table
-import ml.dmlc.xgboost4j.java.spark.rapids.GpuColumnBatch
-import ml.dmlc.xgboost4j.scala.DMatrix
-import ml.dmlc.xgboost4j.scala.spark.rapids.{ColumnBatchToRow, GpuSampler, PluginUtils}
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
-import org.apache.spark.TaskContext
+
+import org.apache.spark.HashPartitioner
 import org.apache.spark.ml.feature.{LabeledPoint => MLLabeledPoint}
 import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector, Vectors}
+import org.apache.spark.ml.param.Param
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Column, DataFrame, Row}
-import org.apache.spark.sql.types.{FloatType, IntegerType, StructType}
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.{FloatType, IntegerType}
 
 object DataUtils extends Serializable {
   private[spark] implicit class XGBLabeledPointFeatures(
@@ -39,15 +38,11 @@ object DataUtils extends Serializable {
 
     /**
      * Returns feature of the point as [[org.apache.spark.ml.linalg.Vector]].
-     *
-     * If the point is sparse, the dimensionality of the resulting sparse
-     * vector would be [[Int.MaxValue]]. This is the only safe value, since
-     * XGBoost does not store the dimensionality explicitly.
      */
     def features: Vector = if (labeledPoint.indices == null) {
       Vectors.dense(labeledPoint.values.map(_.toDouble))
     } else {
-      Vectors.sparse(Int.MaxValue, labeledPoint.indices, labeledPoint.values.map(_.toDouble))
+      Vectors.sparse(labeledPoint.size, labeledPoint.indices, labeledPoint.values.map(_.toDouble))
     }
   }
 
@@ -69,9 +64,76 @@ object DataUtils extends Serializable {
      */
     def asXGB: XGBLabeledPoint = v match {
       case v: DenseVector =>
-        XGBLabeledPoint(0.0f, null, v.values.map(_.toFloat))
+        XGBLabeledPoint(0.0f, v.size, null, v.values.map(_.toFloat))
       case v: SparseVector =>
-        XGBLabeledPoint(0.0f, v.indices, v.values.map(_.toFloat))
+        XGBLabeledPoint(0.0f, v.size, v.indices, v.values.map(_.toFloat))
+    }
+  }
+
+  private def featureValueOfDenseVector(rowHashCode: Int, features: DenseVector): Float = {
+    val featureId = {
+      if (rowHashCode > 0) {
+        rowHashCode % features.size
+      } else {
+        // prevent overflow
+        math.abs(rowHashCode + 1) % features.size
+      }
+    }
+    features.values(featureId).toFloat
+  }
+
+  private def featureValueOfSparseVector(rowHashCode: Int, features: SparseVector): Float = {
+    val featureId = {
+      if (rowHashCode > 0) {
+        rowHashCode % features.indices.length
+      } else {
+        // prevent overflow
+        math.abs(rowHashCode + 1) % features.indices.length
+      }
+    }
+    features.values(featureId).toFloat
+  }
+
+  private def calculatePartitionKey(row: Row, numPartitions: Int): Int = {
+    val Row(_, features: Vector, _, _) = row
+    val rowHashCode = row.hashCode()
+    val featureValue = features match {
+      case denseVector: DenseVector =>
+        featureValueOfDenseVector(rowHashCode, denseVector)
+      case sparseVector: SparseVector =>
+        featureValueOfSparseVector(rowHashCode, sparseVector)
+    }
+    math.abs((rowHashCode.toLong + featureValue).toString.hashCode % numPartitions)
+  }
+
+  private def attachPartitionKey(
+      row: Row,
+      deterministicPartition: Boolean,
+      numWorkers: Int,
+      xgbLp: XGBLabeledPoint): (Int, XGBLabeledPoint) = {
+    if (deterministicPartition) {
+      (calculatePartitionKey(row, numWorkers), xgbLp)
+    } else {
+      (1, xgbLp)
+    }
+  }
+
+  private def repartitionRDDs(
+      deterministicPartition: Boolean,
+      numWorkers: Int,
+      arrayOfRDDs: Array[RDD[(Int, XGBLabeledPoint)]]): Array[RDD[XGBLabeledPoint]] = {
+    if (deterministicPartition) {
+      arrayOfRDDs.map {rdd => rdd.partitionBy(new HashPartitioner(numWorkers))}.map {
+        rdd => rdd.map(_._2)
+      }
+    } else {
+      arrayOfRDDs.map(rdd => {
+        if (rdd.getNumPartitions != numWorkers) {
+          rdd.map(_._2).repartition(numWorkers)
+        } else {
+          rdd.map(_._2)
+        }
+      })
     }
   }
 
@@ -81,6 +143,8 @@ object DataUtils extends Serializable {
       weight: Column,
       baseMargin: Column,
       group: Option[Column],
+      numWorkers: Int,
+      deterministicPartition: Boolean,
       dataFrames: DataFrame*): Array[RDD[XGBLabeledPoint]] = {
     val selectedColumns = group.map(groupCol => Seq(labelCol.cast(FloatType),
       featuresCol,
@@ -90,82 +154,26 @@ object DataUtils extends Serializable {
       featuresCol,
       weight.cast(FloatType),
       baseMargin.cast(FloatType)))
-    dataFrames.toArray.map {
+    val arrayOfRDDs = dataFrames.toArray.map {
       df => df.select(selectedColumns: _*).rdd.map {
-        case Row(label: Float, features: Vector, weight: Float, group: Int, baseMargin: Float) =>
-          val (indices, values) = features match {
-            case v: SparseVector => (v.indices, v.values.map(_.toFloat))
-            case v: DenseVector => (null, v.values.map(_.toFloat))
+        case row @ Row(label: Float, features: Vector, weight: Float, group: Int,
+          baseMargin: Float) =>
+          val (size, indices, values) = features match {
+            case v: SparseVector => (v.size, v.indices, v.values.map(_.toFloat))
+            case v: DenseVector => (v.size, null, v.values.map(_.toFloat))
           }
-          XGBLabeledPoint(label, indices, values, weight, group, baseMargin)
-        case Row(label: Float, features: Vector, weight: Float, baseMargin: Float) =>
-          val (indices, values) = features match {
-            case v: SparseVector => (v.indices, v.values.map(_.toFloat))
-            case v: DenseVector => (null, v.values.map(_.toFloat))
+          val xgbLp = XGBLabeledPoint(label, size, indices, values, weight, group, baseMargin)
+          attachPartitionKey(row, deterministicPartition, numWorkers, xgbLp)
+        case row @ Row(label: Float, features: Vector, weight: Float, baseMargin: Float) =>
+          val (size, indices, values) = features match {
+            case v: SparseVector => (v.size, v.indices, v.values.map(_.toFloat))
+            case v: DenseVector => (v.size, null, v.values.map(_.toFloat))
           }
-          XGBLabeledPoint(label, indices, values, weight, baseMargin = baseMargin)
+          val xgbLp = XGBLabeledPoint(label, size, indices, values, weight, baseMargin = baseMargin)
+          attachPartitionKey(row, deterministicPartition, numWorkers, xgbLp)
       }
     }
-  }
-
-  private[spark] def buildDMatrixIncrementally(gpuId: Int, missing: Float,
-      featureIndices: Seq[Int], iter: Iterator[Table], schema: StructType,
-      sampler: Option[GpuSampler] = None, colNameToBuild: Option[String] = None):
-        (DMatrix, ColumnBatchToRow) = {
-
-    var dm: DMatrix = null
-    var isFirstBatch = true
-    val columnBatchToRow: ColumnBatchToRow = new ColumnBatchToRow
-
-    while (iter.hasNext) {
-      val columnBatch = new GpuColumnBatch(iter.next(), schema, sampler.getOrElse(null))
-      if (isFirstBatch) {
-        isFirstBatch = false
-        dm = new DMatrix(gpuId, missing, columnBatch.getAsColumnData(featureIndices: _*): _*)
-      } else {
-        dm.appendCUDF(columnBatch.getAsColumnData(featureIndices: _*): _*)
-      }
-      columnBatchToRow.appendColumnBatch(columnBatch, colNameToBuild)
-      columnBatch.close()
-    }
-    if (dm == null) {
-      // here we allow empty iter
-      // throw new RuntimeException("Can't build Dmatrix from CUDF")
-    }
-    (dm, columnBatchToRow)
-  }
-
-  // called by classifier or regressor
-  private[spark] def buildGDFColumnData(
-      featuresColNames: Seq[String],
-      labelColName: String,
-      weightColName: String,
-      groupColName: String,
-      dataFrame: DataFrame): GDFColumnData = {
-    require(featuresColNames.nonEmpty, "No features column is specified!")
-    require(labelColName != null && labelColName.nonEmpty, "No label column is specified!")
-    val weightAndGroupName = Seq(weightColName, groupColName).map(
-      name => if (name == null || name.isEmpty) Array.empty[String] else Array(name)
-    )
-    // Seq in this order: features, label, weight, group
-    val colNames = Seq(featuresColNames.toArray, Array(labelColName)) ++ weightAndGroupName
-    // build column indices
-    val schema = dataFrame.schema
-    val indices = colNames.map(_.filter(schema.fieldNames.contains).map(schema.fieldIndex))
-    require(indices.head.length == featuresColNames.length,
-      "Features column(s) in schema do NOT match the one(s) in parameters. " +
-        s"Expect [${featuresColNames.mkString(", ")}], " +
-        s"but found [${indices.head.map(schema.fieldNames).mkString(", ")}]!")
-    require(indices(1).nonEmpty, "Missing label column in schema!")
-    // Check if has group
-    val opGroup = if (colNames(3).nonEmpty) {
-      require(indices(3).nonEmpty, "Can not find group column in schema!")
-      Some(groupColName)
-    } else {
-      None
-    }
-
-    GDFColumnData(dataFrame, indices, opGroup)
+    repartitionRDDs(deterministicPartition, numWorkers, arrayOfRDDs)
   }
 
 }

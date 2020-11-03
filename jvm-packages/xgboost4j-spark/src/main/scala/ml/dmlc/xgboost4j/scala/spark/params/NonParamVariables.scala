@@ -19,25 +19,18 @@ package ml.dmlc.xgboost4j.scala.spark.params
 import org.apache.spark.sql.DataFrame
 
 trait NonParamVariables {
-  protected var evalSetsMap: Map[String, AnyRef] = Map.empty
-  private val KEY_EVAL_SETS: String = "eval_sets"
+  protected var evalSetsMap: Map[String, DataFrame] = Map.empty
 
-  def setEvalSets(evalSets: Map[String, AnyRef]): this.type = {
+  def setEvalSets(evalSets: Map[String, DataFrame]): this.type = {
     evalSetsMap = evalSets
     this
   }
 
   def getEvalSets(params: Map[String, Any]): Map[String, DataFrame] = {
-    val evalDFs = if (params.contains(KEY_EVAL_SETS)) {
-      params(KEY_EVAL_SETS).asInstanceOf[Map[String, DataFrame]]
+    if (params.contains("eval_sets")) {
+      params("eval_sets").asInstanceOf[Map[String, DataFrame]]
     } else {
-      evalSetsMap.asInstanceOf[Map[String, DataFrame]]
+      evalSetsMap
     }
-    // Do type check for value entry here because the `asInstanceOf` just checks the first
-    // layer: Map, even specifying the types for both key and value.
-    require(evalDFs.values.forall(_.isInstanceOf[DataFrame]),
-      "Wrong type for value! Evaluation sets should be Map(name: String -> DataFrame) for CPU.")
-    evalDFs
   }
-
 }

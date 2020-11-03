@@ -29,7 +29,6 @@ public class XGBoostSparkJNI {
 
   static {
     try {
-      logger.info("load XGBoost libs");
       NativeLibLoader.initXGBoost();
     } catch (Exception ex) {
       logger.error("Failed to load native library", ex);
@@ -56,14 +55,14 @@ public class XGBoostSparkJNI {
    * Build an array of fixed-length Spark UnsafeRow using the GPU.
    * @param dataPtrs native address of cudf column data pointers
    * @param validPtrs native address of cudf column valid pointers
-   * @param dTypeSizes type size
-   * @param rows number of rows
+   * @param dTypeSizes
+   * @param rows
    * @return native address of the UnsafeRow array
    * NOTE: It is the responsibility of the caller to free the native memory
    *       returned by this function (e.g.: using Platform.freeMemory).
    */
   private static native long buildUnsafeRows(long[] dataPtrs, long[] validPtrs,
-                                             int[] dTypeSizes, long rows);
+                                            int[] dTypeSizes, long rows);
 
   public static native int getGpuDevice();
 

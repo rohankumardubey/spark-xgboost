@@ -57,6 +57,14 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFro
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
+ * Method:    XGDMatrixCreateFromMatRef
+ * Signature: (JIIF[J)I
+ */
+JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromMatRef
+  (JNIEnv *jenv, jclass jcls, jlong jdataRef, jint jnrow, jint jncol, jfloat jmiss, jlongArray jout);
+
+/*
+ * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
  * Method:    XGDMatrixSliceDMatrix
  * Signature: (J[I[J)I
  */
@@ -94,14 +102,6 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetFloatI
  */
 JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetUIntInfo
   (JNIEnv *, jclass, jlong, jstring, jintArray);
-
-/*
- * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixSetGroup
- * Signature: (J[I)I
- */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetGroup
-  (JNIEnv *, jclass, jlong, jintArray);
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
@@ -329,35 +329,27 @@ JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_RabitAllreduce
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixCreateFromCUDF
- * Signature: ([J[J[IJIF[J)I
+ * Method:    XGDMatrixCreateFromArrayInterfaceColumns
+ * Signature: (Ljava/lang/String;FI[J)I
  */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromCUDF
-    (JNIEnv *, jclass, jlongArray, jlongArray, jintArray, jlong, jint, jfloat, jlongArray);
+JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixCreateFromArrayInterfaceColumns
+    (JNIEnv *, jclass, jstring, jfloat, jint, jlongArray);
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixAppendCUDF
- * Signature: (JIF[J[J[IJ)I
+ * Method:    XGDMatrixSetInfoFromInterface
+ * Signature: (JLjava/lang/String;Ljava/lang/String;)I
  */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixAppendCUDF
-    (JNIEnv *, jclass, jlong, jint, jfloat, jlongArray, jlongArray, jintArray, jlong);
+JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetInfoFromInterface
+  (JNIEnv *, jclass, jlong, jstring, jstring);
 
 /*
  * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixSetCUDFInfo
- * Signature: (JLjava/lang/String;I[J[I[JJ)I
+ * Method:    XGDeviceQuantileDMatrixCreateFromCallback
+ * Signature: (Ljava/util/Iterator;FII[J)I
  */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixSetCUDFInfo
-    (JNIEnv *, jclass, jlong, jstring, jint, jlongArray, jintArray, jlongArray, jlong);
-
-/*
- * Class:     ml_dmlc_xgboost4j_java_XGBoostJNI
- * Method:    XGDMatrixAppendCUDFInfo
- * Signature: (JLjava/lang/String;I[J[I[JJ)I
- */
-JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDMatrixAppendCUDFInfo
-    (JNIEnv *, jclass, jlong, jstring, jint, jlongArray, jintArray, jlongArray, jlong);
+JNIEXPORT jint JNICALL Java_ml_dmlc_xgboost4j_java_XGBoostJNI_XGDeviceQuantileDMatrixCreateFromCallback
+    (JNIEnv *, jclass, jobject, jfloat, jint, jint, jlongArray);
 
 
 #ifdef __cplusplus

@@ -59,7 +59,7 @@ case class GpuSampler(lb: Double, ub: Double, seed: Long, complement: Boolean = 
 class CrossValidator extends tuning.CrossValidator {
 
   override def fit(dataset: Dataset[_]): CrossValidatorModel = {
-    if (PluginUtils.isSupportColumnar(dataset)) {
+    if (GpuUtils.isRapidsEnabled(dataset)) {
       train(dataset)
     } else {
       super.fit(dataset)
@@ -110,12 +110,20 @@ class CrossValidator extends tuning.CrossValidator {
           val evalDf = est match {
             case classifier: XGBoostClassifier =>
               model = classifier.copy(paramMap).trainWithGpuSampler(dataset, trainingSampler)
-              model.asInstanceOf[XGBoostClassificationModel].transformWithGpuSampler(
-                dataset, validationSampler, Some(classifier.getLabelCol))
+              model match {
+                case classifierModel: XGBoostClassificationModel =>
+                  classifierModel
+                    .set(classifierModel.toRowCols, Seq(classifier.getLabelCol))
+                    .transformWithGpuSampler(dataset, validationSampler)
+              }
             case regressor: XGBoostRegressor =>
               model = regressor.copy(paramMap).trainWithGpuSampler(dataset, trainingSampler)
-              model.asInstanceOf[XGBoostRegressionModel].transformWithGpuSampler(
-                dataset, validationSampler, Some(regressor.getLabelCol))
+              model match {
+                case regressorModel: XGBoostRegressionModel =>
+                  regressorModel
+                    .set(regressorModel.toRowCols, Seq(regressor.getLabelCol))
+                    .transformWithGpuSampler(dataset, validationSampler)
+              }
             case _ => throw new IllegalArgumentException("Only XGBoostRegressor and " +
               "XGBoostClassifier are supported"
             )
