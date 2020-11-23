@@ -1,22 +1,24 @@
 /*!
- * Copyright (c) 2015 by Contributors
+ * Copyright (c) 2015-2019 by Contributors
  * \file logging.h
- * \brief defines console logging options for xgboost.
- *  Use to enforce unified print behavior.
- *  For debug loggers, use LOG(INFO) and LOG(ERROR).
+ *
+ * \brief defines console logging options for xgboost.  Use to enforce unified print
+ *  behavior.
  */
 #ifndef XGBOOST_LOGGING_H_
 #define XGBOOST_LOGGING_H_
 
 #include <dmlc/logging.h>
-#include <dmlc/parameter.h>
 #include <dmlc/thread_local.h>
+
+#include <xgboost/base.h>
+#include <xgboost/parameter.h>
+
 #include <sstream>
 #include <map>
 #include <string>
 #include <utility>
 #include <vector>
-#include "./base.h"
 
 namespace xgboost {
 
@@ -34,14 +36,10 @@ class BaseLogger {
 };
 
 // Parsing both silent and debug_verbose is to provide backward compatibility.
-struct ConsoleLoggerParam : public dmlc::Parameter<ConsoleLoggerParam> {
-  bool silent;  // deprecated.
+struct ConsoleLoggerParam : public XGBoostParameter<ConsoleLoggerParam> {
   int verbosity;
 
   DMLC_DECLARE_PARAMETER(ConsoleLoggerParam) {
-    DMLC_DECLARE_FIELD(silent)
-        .set_default(false)
-        .describe("Do not print information during training.");
     DMLC_DECLARE_FIELD(verbosity)
         .set_range(0, 3)
         .set_default(1)  // shows only warning
@@ -154,5 +152,14 @@ using LogCallbackRegistryStore = dmlc::ThreadLocalStore<LogCallbackRegistry>;
     ::xgboost::ConsoleLogger::LogVerbosity::kIgnore)
 // Enable LOG(TRACKER) for print messages to tracker
 #define LOG_TRACKER ::xgboost::TrackerLogger()
+
+#if defined(CHECK)
+#undef CHECK
+#define CHECK(cond)                                     \
+  if (XGBOOST_EXPECT(!(cond), false))                   \
+    dmlc::LogMessageFatal(__FILE__, __LINE__).stream()  \
+        << "Check failed: " #cond << ": "
+#endif  // defined(CHECK)
+
 }  // namespace xgboost.
 #endif  // XGBOOST_LOGGING_H_

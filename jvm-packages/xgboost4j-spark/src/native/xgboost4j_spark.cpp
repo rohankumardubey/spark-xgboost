@@ -22,12 +22,18 @@
 #include <vector>
 #include <memory>
 #include <iostream>
-#include <xgboost/gpu_column.h>
 
 #include <cuda_runtime.h>
 
 #include "xgboost4j_spark_gpu.h"
 #include "xgboost4j_spark.h"
+
+struct gpu_column_data {
+  long* data_ptr;
+  long* valid_ptr;
+  int dtype_size_in_bytes;
+  long num_row;
+};
 
 namespace xgboost {
 namespace spark {
@@ -81,7 +87,7 @@ static unsigned int get_unsaferow_nullset_size(unsigned int num_columns) {
 }
 
 static void build_unsafe_row_nullsets(void* unsafe_rows_dptr,
-    std::vector<gpu_column_data *> const& gdfcols) {
+                                      std::vector<gpu_column_data *> const& gdfcols) {
   unsigned int num_columns = gdfcols.size();
   size_t num_rows = gdfcols[0]->num_row;
 
@@ -93,7 +99,7 @@ static void build_unsafe_row_nullsets(void* unsafe_rows_dptr,
   unique_gpu_ptr dev_valid_mem(num_columns * sizeof(*valid_ptrs.data()));
   uint32_t** dev_valid_ptrs = reinterpret_cast<uint32_t**>(dev_valid_mem.get());
   cudaError_t cuda_status = cudaMemcpy(dev_valid_ptrs, valid_ptrs.data(),
-      num_columns * sizeof(valid_ptrs[0]), cudaMemcpyHostToDevice);
+                                       num_columns * sizeof(valid_ptrs[0]), cudaMemcpyHostToDevice);
   if (cuda_status != cudaSuccess) {
     throw std::runtime_error(cudaGetErrorString(cuda_status));
   }
@@ -106,6 +112,7 @@ static void build_unsafe_row_nullsets(void* unsafe_rows_dptr,
     throw std::runtime_error(cudaGetErrorString(cuda_status));
   }
 }
+
 
 /*!
  * \brief Transforms a set of cudf columns into an array of Spark UnsafeRow.
@@ -153,14 +160,13 @@ void* build_unsafe_rows(std::vector<gpu_column_data *> const& gdfcols) {
   }
   // This copy also serves as a synchronization point with the GPU.
   cuda_status = cudaMemcpy(unsafe_rows.get(), unsafe_rows_dptr,
-                           unsafe_rows_size, cudaMemcpyDeviceToHost);
+      unsafe_rows_size, cudaMemcpyDeviceToHost);
   if (cuda_status != cudaSuccess) {
     throw std::runtime_error(cudaGetErrorString(cuda_status));
   }
 
   return unsafe_rows.release();
 }
-
 } // namespace spark
 } // namespace xgboost
 
@@ -200,14 +206,11 @@ Java_ml_dmlc_xgboost4j_java_XGBoostSparkJNI_buildUnsafeRows(JNIEnv * env,
   }
   jlong* valid_jlongs = env->GetLongArrayElements(validPtrs, nullptr);
   if (valid_jlongs == nullptr) {
-    env->ReleaseLongArrayElements(dataPtrs, data_jlongs, JNI_ABORT);
     throw_java_exception(env, "Failed to get valid handles");
     return 0;
   }
   jint* dtype_jints = env->GetIntArrayElements(dTypePtrs, nullptr);
   if (dtype_jints == nullptr) {
-    env->ReleaseLongArrayElements(dataPtrs, data_jlongs, JNI_ABORT);
-    env->ReleaseLongArrayElements(validPtrs, valid_jlongs, JNI_ABORT);
     throw_java_exception(env, "Failed to get data type sizes");
     return 0;
   }
@@ -217,7 +220,6 @@ Java_ml_dmlc_xgboost4j_java_XGBoostSparkJNI_buildUnsafeRows(JNIEnv * env,
     tmp_column->valid_ptr = reinterpret_cast<long * > (valid_jlongs[i]);
     tmp_column->dtype_size_in_bytes = dtype_jints[i];
     tmp_column->num_row = numRows;
-    tmp_column->type_id = 0; // not used for building unsafe row
     gpu_cols.push_back(tmp_column);
   }
 

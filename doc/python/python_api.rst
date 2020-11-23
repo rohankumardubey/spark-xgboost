@@ -14,6 +14,9 @@ Core Data Structure
     :members:
     :show-inheritance:
 
+.. autoclass:: xgboost.DeviceQuantileDMatrix
+    :show-inheritance:
+
 .. autoclass:: xgboost.Booster
     :members:
     :show-inheritance:
@@ -80,9 +83,12 @@ Dask API
 --------
 .. automodule:: xgboost.dask
 
-.. autofunction:: xgboost.dask.run
+.. autofunction:: xgboost.dask.DaskDMatrix
 
-.. autofunction:: xgboost.dask.create_worker_dmatrix
+.. autofunction:: xgboost.dask.train
 
-.. autofunction:: xgboost.dask.get_local_data
+.. autofunction:: xgboost.dask.predict
 
+.. autofunction:: xgboost.dask.DaskXGBClassifier
+
+.. autofunction:: xgboost.dask.DaskXGBRegressor

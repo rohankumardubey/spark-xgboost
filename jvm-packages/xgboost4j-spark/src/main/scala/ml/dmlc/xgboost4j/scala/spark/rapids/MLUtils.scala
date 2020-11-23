@@ -17,9 +17,9 @@
 package ml.dmlc.xgboost4j.scala.spark.rapids
 
 import org.apache.spark.ml.param.{Param, Params}
+import org.apache.spark.sql.{DataFrame, Dataset}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{FloatType, NumericType, StructType}
-import org.apache.spark.sql.{DataFrame, Dataset}
 
 private[spark] object MLUtils {
 

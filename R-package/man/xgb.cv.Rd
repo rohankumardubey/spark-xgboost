@@ -4,19 +4,39 @@
 \alias{xgb.cv}
 \title{Cross Validation}
 \usage{
-xgb.cv(params = list(), data, nrounds, nfold, label = NULL, missing = NA,
-  prediction = FALSE, showsd = TRUE, metrics = list(), obj = NULL,
-  feval = NULL, stratified = TRUE, folds = NULL, verbose = TRUE,
-  print_every_n = 1L, early_stopping_rounds = NULL, maximize = NULL,
-  callbacks = list(), ...)
+xgb.cv(
+  params = list(),
+  data,
+  nrounds,
+  nfold,
+  label = NULL,
+  missing = NA,
+  prediction = FALSE,
+  showsd = TRUE,
+  metrics = list(),
+  obj = NULL,
+  feval = NULL,
+  stratified = TRUE,
+  folds = NULL,
+  train_folds = NULL,
+  verbose = TRUE,
+  print_every_n = 1L,
+  early_stopping_rounds = NULL,
+  maximize = NULL,
+  callbacks = list(),
+  ...
+)
 }
 \arguments{
-\item{params}{the list of parameters. Commonly used ones are:
+\item{params}{the list of parameters. The complete list of parameters is
+  available in the \href{http://xgboost.readthedocs.io/en/latest/parameter.html}{online documentation}. Below
+  is a shorter summary:
 \itemize{
   \item \code{objective} objective function, common ones are
   \itemize{
-    \item \code{reg:squarederror} Regression with squared loss
-    \item \code{binary:logistic} logistic regression for classification
+    \item \code{reg:squarederror} Regression with squared loss.
+    \item \code{binary:logistic} logistic regression for classification.
+    \item See \code{\link[=xgb.train]{xgb.train}()} for complete list of objectives.
   }
   \item \code{eta} step size of each boosting step
   \item \code{max_depth} maximum depth of the tree
@@ -69,6 +89,9 @@ by the values of outcome labels.}
 (each element must be a vector of test fold's indices). When folds are supplied,
 the \code{nfold} and \code{stratified} parameters are ignored.}
 
+\item{train_folds}{\code{list} list specifying which indicies to use for training. If \code{NULL}
+(the default) all indices not specified in \code{folds} will be used for training.}
+
 \item{verbose}{\code{boolean}, print the statistics during the process}
 
 \item{print_every_n}{Print each n-th iteration evaluation messages when \code{verbose>0}.
@@ -115,7 +138,7 @@ An object of class \code{xgb.cv.synchronous} with the following elements:
         (only available with early stopping).
   \item \code{pred} CV prediction values available when \code{prediction} is set.
         It is either vector or matrix (see \code{\link{cb.cv.predict}}).
-  \item \code{models} a liost of the CV folds' models. It is only available with the explicit
+  \item \code{models} a list of the CV folds' models. It is only available with the explicit
         setting of the \code{cb.cv.predict(save_models = TRUE)} callback.
 }
 }
@@ -131,7 +154,7 @@ The cross-validation process is then repeated \code{nrounds} times, with each of
 
 All observations are used for both training and validation.
 
-Adapted from \url{http://en.wikipedia.org/wiki/Cross-validation_\%28statistics\%29#k-fold_cross-validation}
+Adapted from \url{https://en.wikipedia.org/wiki/Cross-validation_\%28statistics\%29}
 }
 \examples{
 data(agaricus.train, package='xgboost')

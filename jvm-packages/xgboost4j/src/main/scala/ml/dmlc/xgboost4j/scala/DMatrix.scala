@@ -18,11 +18,9 @@ package ml.dmlc.xgboost4j.scala
 
 import _root_.scala.collection.JavaConverters._
 import ml.dmlc.xgboost4j.LabeledPoint
-import ml.dmlc.xgboost4j.java.rapids.ColumnData
-import ml.dmlc.xgboost4j.java.{DataBatch, XGBoostError, DMatrix => JDMatrix}
+import ml.dmlc.xgboost4j.java.{DMatrix => JDMatrix, DataBatch, XGBoostError}
 
 class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
-
   /**
    * init DMatrix from file (svmlight format)
    *
@@ -100,56 +98,6 @@ class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
   }
 
   /**
-   * create DMatrix from CUDF
-   * @param cds ColumnData
-   * @param gpuId gpu id to use
-   * @param missing missing value
-   * @throws ml.dmlc.xgboost4j.java.XGBoostError
-   */
-  @throws(classOf[XGBoostError])
-  def this(gpuId: Int, missing: Float, cds: ColumnData*) {
-    this(new JDMatrix(gpuId, missing, cds: _*))
-  }
-
-  /**
-   * create DMatrix from CUDF
-   * @throws ml.dmlc.xgboost4j.java.XGBoostError
-   */
-  @throws(classOf[XGBoostError])
-  def this(cds: ColumnData*) {
-    this(0, 0.0f, cds: _*)
-  }
-
-  /**
-    * Append CUDF to dmatrix
-    * @param cds ColumnDatas
-    */
-  @throws(classOf[XGBoostError])
-  def appendCUDF(cds: ColumnData*): Unit = {
-    jDMatrix.appendCUDF(cds: _*)
-  }
-
-  /**
-   * set CUDF info of dmatrix
-   * @param field label or feature
-   * @param cds ColumnDatas
-   */
-  @throws(classOf[XGBoostError])
-  def setCUDFInfo(field: String, cds: ColumnData*): Unit = {
-    jDMatrix.setCUDFInfo(field, cds: _*)
-  }
-
-  /**
-    * set CUDF info of dmatrix
-    * @param field label or feature
-    * @param cds ColumnDatas
-    */
-  @throws(classOf[XGBoostError])
-  def appendCUDFInfo(field: String, cds: ColumnData*): Unit = {
-    jDMatrix.appendCUDFInfo(field, cds: _*)
-  }
-
-  /**
    * set label of dmatrix
    *
    * @param labels labels
@@ -199,6 +147,14 @@ class DMatrix private[scala](private[scala] val jDMatrix: JDMatrix) {
   @throws(classOf[XGBoostError])
   def setGroup(group: Array[Int]): Unit = {
     jDMatrix.setGroup(group)
+  }
+
+  /**
+   * Get group sizes of DMatrix (used for ranking)
+   */
+  @throws(classOf[XGBoostError])
+  def getGroup(): Array[Int] = {
+    jDMatrix.getGroup()
   }
 
   /**

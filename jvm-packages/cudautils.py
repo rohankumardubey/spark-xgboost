@@ -8,7 +8,8 @@ import sys
 # '' means default classifier
 cuda_vers = {
   '10.1': ['cuda10-1', ''],
-  '10.2': ['cuda10-2']
+  '10.2': ['cuda10-2'],
+  '11.0': ['cuda11']
 }
 
 def check_classifier(classifier):

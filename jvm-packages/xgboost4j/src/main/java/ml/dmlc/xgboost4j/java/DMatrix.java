@@ -18,7 +18,9 @@ package ml.dmlc.xgboost4j.java;
 import java.util.Iterator;
 
 import ml.dmlc.xgboost4j.LabeledPoint;
-import ml.dmlc.xgboost4j.java.rapids.ColumnData;
+import ml.dmlc.xgboost4j.java.rapids.ColumnBatch;
+import ml.dmlc.xgboost4j.java.rapids.CudfTable;
+import ml.dmlc.xgboost4j.java.util.BigDenseMatrix;
 
 /**
  * DMatrix for xgboost.
@@ -27,8 +29,6 @@ import ml.dmlc.xgboost4j.java.rapids.ColumnData;
  */
 public class DMatrix {
   protected long handle = 0;
-  private int gpuId = 0;
-  private float missing = Float.NaN;
 
   /**
    * sparse matrix type (CSR or CSC)
@@ -36,6 +36,29 @@ public class DMatrix {
   public static enum SparseType {
     CSR,
     CSC;
+  }
+
+  public DMatrix(Iterator<CudfTable> iter, float missing, int maxBin, int nthread)
+      throws XGBoostError {
+    long[] out = new long[1];
+    Iterator<ColumnBatch> batchIter = new ColumnBatch.ColumnBatchBatchIterator(iter);
+    XGBoostJNI.checkCall(XGBoostJNI.XGDeviceQuantileDMatrixCreateFromCallback(
+        batchIter, missing, maxBin, nthread, out));
+    handle = out[0];
+  }
+
+  /**
+   * Create DMatrix from column array interface
+   * @param json array interface
+   * @param missing missing value
+   * @param nthread threads number
+   * @throws XGBoostError
+   */
+  public DMatrix(String json, float missing, int nthread) throws XGBoostError {
+    long[] out = new long[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromArrayInterfaceColumns(
+        json, missing, nthread, out));
+    handle = out[0];
   }
 
   /**
@@ -134,6 +157,16 @@ public class DMatrix {
   }
 
   /**
+   * create DMatrix from a BigDenseMatrix
+   *
+   * @param matrix instance of BigDenseMatrix
+   * @throws XGBoostError native error
+   */
+  public DMatrix(BigDenseMatrix matrix) throws XGBoostError {
+    this(matrix, 0.0f);
+  }
+
+  /**
    * create DMatrix from dense matrix
    * @param data data values
    * @param nrow number of rows
@@ -147,76 +180,54 @@ public class DMatrix {
   }
 
   /**
+   * create DMatrix from dense matrix
+   * @param matrix instance of BigDenseMatrix
+   * @param missing the specified value to represent the missing value
+   */
+  public DMatrix(BigDenseMatrix matrix, float missing) throws XGBoostError {
+    long[] out = new long[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromMatRef(matrix.address, matrix.nrow,
+        matrix.ncol, missing, out));
+    handle = out[0];
+  }
+
+  /**
    * used for DMatrix slice
    */
   protected DMatrix(long handle) {
     this.handle = handle;
   }
 
-  //START CUDF Support
   /**
-   * Create DMatrix from cuDF.
+   * set label of dmatrix from column array interface
    *
-   * @param cds ColumnData
+   * @param labelJson label column array interface
    * @throws XGBoostError native error
    */
-  public DMatrix(final ColumnData... cds) throws XGBoostError  {
-    this(0, Float.NaN, cds);
+  public void setLabel(String labelJson) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetInfoFromInterface(handle, "label", labelJson));
   }
 
   /**
-   * Create DMatrix from cuDF.
+   * set label of dmatrix from column array interface
    *
-   * @param gpuId   The gpu id to use
-   * @param missing  missing value
-   * @param cds      ColumnData
+   * @param weightJson weight column array interface
    * @throws XGBoostError native error
    */
-  public DMatrix(int gpuId, float missing, final ColumnData... cds) throws XGBoostError {
-    if (cds == null || cds.length <= 0) {
-      throw new NullPointerException("ColumnDatas: empty");
-    }
-    long[] out = new long[1];
-    this.gpuId = gpuId;
-    this.missing = missing;
-    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromCUDF(gpuId, missing, out, cds));
-    handle = out[0];
+  public void setWeight(String weightJson) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetInfoFromInterface(handle, "weight", weightJson));
   }
 
   /**
-   * Append CUDF to DMatrix
-   * @param cds ColumnDatas
-   * @throws XGBoostError
-   */
-  public void appendCUDF(final ColumnData... cds) throws XGBoostError {
-    if (cds == null || cds.length <= 0) {
-      throw new NullPointerException("ColumnDatas: empty");
-    }
-    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixAppendCUDF(handle, gpuId, missing, cds));
-  }
-
-  /**
-   * Set CUDF information for DMatrix.
+   * set label of dmatrix from column array interface
    *
-   * @param field  The name of this info, such as "label" or "weight"
-   * @param cds   ColumnDatas
+   * @param baseMarginJson base margin column array interface
    * @throws XGBoostError native error
    */
-  public void setCUDFInfo(String field, final ColumnData... cds) throws XGBoostError {
-    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetCUDFInfo(handle, field, gpuId, cds));
+  public void setBaseMargin(String baseMarginJson) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetInfoFromInterface(handle, "base_margin",
+        baseMarginJson));
   }
-
-  /**
-   * Append CUDF information for DMatrix
-   * @param field
-   * @param cds
-   * @throws XGBoostError
-   */
-  public void appendCUDFInfo(String field, final ColumnData... cds) throws XGBoostError {
-    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixAppendCUDFInfo(handle, field, gpuId, cds));
-  }
-
-  // END CUDF Support
 
   /**
    * set label of dmatrix
@@ -268,7 +279,17 @@ public class DMatrix {
    * @throws XGBoostError native error
    */
   public void setGroup(int[] group) throws XGBoostError {
-    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetGroup(handle, group));
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetUIntInfo(handle, "group", group));
+  }
+
+  /**
+   * Get group sizes of DMatrix
+   *
+   * @throws XGBoostError native error
+   * @return group size as array
+   */
+  public int[] getGroup() throws XGBoostError {
+    return getIntInfo("group_ptr");
   }
 
   private float[] getFloatInfo(String field) throws XGBoostError {

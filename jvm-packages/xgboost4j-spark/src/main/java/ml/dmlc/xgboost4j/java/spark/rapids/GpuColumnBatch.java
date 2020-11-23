@@ -22,40 +22,41 @@ import java.util.List;
 import ai.rapids.cudf.ColumnVector;
 import ai.rapids.cudf.DType;
 import ai.rapids.cudf.HostColumnVector;
+import ai.rapids.cudf.Scalar;
 import ai.rapids.cudf.Table;
 
 import org.apache.spark.sql.types.*;
 import org.apache.spark.util.random.BernoulliCellSampler;
 
-import ml.dmlc.xgboost4j.java.rapids.ColumnData;
-import ml.dmlc.xgboost4j.java.rapids.GpuColumnVectorUtils;
+import ml.dmlc.xgboost4j.java.rapids.CudfTable;
 import ml.dmlc.xgboost4j.scala.spark.rapids.GpuSampler;
 
-public class GpuColumnBatch {
-  private Table table;
+/**
+ * CudfTable with schema for scala
+ */
+public class GpuColumnBatch extends CudfTable {
   private final StructType schema;
   private final GpuSampler sampler;
 
   public GpuColumnBatch(Table table, StructType schema) {
-    this.table = table;
+    super(table);
     this.schema = schema;
     this.sampler = null;
   }
 
   public GpuColumnBatch(Table table, StructType schema, GpuSampler sampler) {
-    this.table = table;
+    super(table);
     this.schema = schema;
     this.sampler = sampler;
-
-    samplingTable();
+    samplingTable(table);
   }
 
-  private void samplingTable() {
+  private void samplingTable(Table table) {
     if (sampler != null) {
       BernoulliCellSampler bcs = new BernoulliCellSampler(sampler.lb(), sampler.ub(),
           sampler.complement());
       bcs.setSeed(sampler.seed());
-      Long num_rows = getNumRows();
+      Long num_rows = table.getRowCount();
       byte[] maskVals = new byte[num_rows.intValue()];
       for (int i = 0; i < num_rows.intValue(); i++) {
         maskVals[i] = (byte) bcs.sample();
@@ -65,7 +66,9 @@ public class GpuColumnBatch {
       mask.close();
       table.close();
       table = null;
-      table = filteredTable;
+      setTable(filteredTable);
+    } else {
+      setTable(table);
     }
   }
 
@@ -73,30 +76,43 @@ public class GpuColumnBatch {
     return schema;
   }
 
-  public long getNumRows() {
-    return table.getRowCount();
+  public double getMaxInColumn(int colIndex) {
+    Scalar scalar = getColumnVector(colIndex).max(DType.FLOAT64);
+    if (scalar.isValid()) {
+      return scalar.getDouble();
+    } else {
+      throw new RuntimeException("Invalid scalar for column at " + colIndex);
+    }
   }
 
-  public int getNumColumns() {
-    return table.getNumberOfColumns();
+  public static GpuColumnBatch merge(GpuColumnBatch... columnBatches) {
+    if (columnBatches == null || columnBatches.length <= 0) {
+      throw new IllegalArgumentException("Require at least one GpuColumnBatch");
+    }
+    if (columnBatches.length == 1) {
+      return columnBatches[0];
+    } else {
+      try {
+        Table[] tables = Arrays.stream(columnBatches)
+          .map(cb -> cb.getTable())
+          .toArray(Table[]::new);
+        Table mergedTable = Table.concatenate(tables);
+        return new GpuColumnBatch(mergedTable, columnBatches[0].getSchema());
+      } finally {
+        for (GpuColumnBatch cb : columnBatches) {
+          try {
+            cb.close();
+          } catch (Exception e) {
+            e.printStackTrace();
+          }
+        }
+      }
+    }
   }
 
-  public ColumnVector getColumnVector(int index) {
-    return table.getColumn(index);
-  }
-
-  public long getColumn(int index) {
-    ColumnVector v = table.getColumn(index);
-    return v.getNativeView();
-  }
-
-  public HostColumnVector getColumnVectorInitHost(int index) {
-    ColumnVector cv = table.getColumn(index);
+  private HostColumnVector getColumnVectorInitHost(int index) {
+    ColumnVector cv = getTable().getColumn(index);
     return cv.copyToHost();
-  }
-
-  public void close() {
-    table.close();
   }
 
   private static double getNumericValueInColumn(int dataIndex, HostColumnVector hcv) {
@@ -242,21 +258,5 @@ public class GpuColumnBatch {
       return DType.STRING; // TODO what do we want to do about STRING_CATEGORY???
     }
     return null;
-  }
-
-  public ColumnData[] getAsColumnData(int... indices) {
-    if (indices == null || indices.length == 0) return new ColumnData[]{};
-    return Arrays.stream(indices)
-      .mapToObj(indice -> getColumnVector((int) indice))
-      .map(GpuColumnVectorUtils::getColumnData)
-      .toArray(ColumnData[]::new);
-  }
-
-  public ColumnData[] getAsColumnData(long... indices) {
-    if (indices == null || indices.length == 0) return new ColumnData[]{};
-    return Arrays.stream(indices)
-      .mapToObj(indice -> getColumnVector((int) indice))
-      .map(GpuColumnVectorUtils::getColumnData)
-      .toArray(ColumnData[]::new);
   }
 }

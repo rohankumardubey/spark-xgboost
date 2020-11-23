@@ -16,7 +16,7 @@
 
 package org.apache.spark.ml.tuning
 
-import org.apache.spark.ml.{Model}
+import org.apache.spark.ml.Model
 
 object RapidsCrossValidatorModel {
 

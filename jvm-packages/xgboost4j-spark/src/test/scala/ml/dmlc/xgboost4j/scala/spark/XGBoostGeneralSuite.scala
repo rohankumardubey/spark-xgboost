@@ -16,20 +16,15 @@
 
 package ml.dmlc.xgboost4j.scala.spark
 
-import java.nio.file.Files
-
 import scala.util.Random
-
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
 import ml.dmlc.xgboost4j.scala.DMatrix
-import ml.dmlc.xgboost4j.scala.{XGBoost => SXGBoost, _}
-import org.apache.hadoop.fs.{FileSystem, Path}
-import org.apache.spark.TaskContext
+import org.apache.spark.{TaskContext}
 import org.scalatest.FunSuite
-
 import org.apache.spark.ml.feature.VectorAssembler
+import org.apache.spark.sql.functions.lit
 
-class XGBoostGeneralSuite extends FunSuite with PerTest {
+class XGBoostGeneralSuite extends FunSuite with TmpFolderPerSuite with PerTest {
 
   test("distributed training with the specified worker number") {
     val trainingRDD = sc.parallelize(Classification.train)
@@ -178,60 +173,6 @@ class XGBoostGeneralSuite extends FunSuite with PerTest {
     assert(x < 0.1)
   }
 
-  test("training with checkpoint boosters") {
-    val eval = new EvalError()
-    val training = buildDataFrame(Classification.train)
-    val testDM = new DMatrix(Classification.test.iterator)
-
-    val tmpPath = Files.createTempDirectory("model1").toAbsolutePath.toString
-    val paramMap = Map("eta" -> "1", "max_depth" -> 2,
-      "objective" -> "binary:logistic", "checkpoint_path" -> tmpPath,
-      "checkpoint_interval" -> 2, "num_workers" -> numWorkers)
-
-    val prevModel = new XGBoostClassifier(paramMap ++ Seq("num_round" -> 5)).fit(training)
-    def error(model: Booster): Float = eval.eval(
-      model.predict(testDM, outPutMargin = true), testDM)
-
-    // Check only one model is kept after training
-    val files = FileSystem.get(sc.hadoopConfiguration).listStatus(new Path(tmpPath))
-    assert(files.length == 1)
-    assert(files.head.getPath.getName == "8.model")
-    val tmpModel = SXGBoost.loadModel(s"$tmpPath/8.model")
-
-    // Train next model based on prev model
-    val nextModel = new XGBoostClassifier(paramMap ++ Seq("num_round" -> 8)).fit(training)
-    assert(error(tmpModel) > error(prevModel._booster))
-    assert(error(prevModel._booster) > error(nextModel._booster))
-    assert(error(nextModel._booster) < 0.1)
-  }
-
-  test("training with checkpoint boosters with cached training dataset") {
-    val eval = new EvalError()
-    val training = buildDataFrame(Classification.train)
-    val testDM = new DMatrix(Classification.test.iterator)
-
-    val tmpPath = Files.createTempDirectory("model1").toAbsolutePath.toString
-    val paramMap = Map("eta" -> "1", "max_depth" -> 2,
-      "objective" -> "binary:logistic", "checkpoint_path" -> tmpPath,
-      "checkpoint_interval" -> 2, "num_workers" -> numWorkers, "cacheTrainingSet" -> true)
-
-    val prevModel = new XGBoostClassifier(paramMap ++ Seq("num_round" -> 5)).fit(training)
-    def error(model: Booster): Float = eval.eval(
-      model.predict(testDM, outPutMargin = true), testDM)
-
-    // Check only one model is kept after training
-    val files = FileSystem.get(sc.hadoopConfiguration).listStatus(new Path(tmpPath))
-    assert(files.length == 1)
-    assert(files.head.getPath.getName == "8.model")
-    val tmpModel = SXGBoost.loadModel(s"$tmpPath/8.model")
-
-    // Train next model based on prev model
-    val nextModel = new XGBoostClassifier(paramMap ++ Seq("num_round" -> 8)).fit(training)
-    assert(error(tmpModel) > error(prevModel._booster))
-    assert(error(prevModel._booster) > error(nextModel._booster))
-    assert(error(nextModel._booster) < 0.1)
-  }
-
   test("repartitionForTrainingGroup with group data") {
     // test different splits to cover the corner cases.
     for (split <- 1 to 20) {
@@ -262,12 +203,11 @@ class XGBoostGeneralSuite extends FunSuite with PerTest {
   }
 
   test("distributed training with group data") {
-    val numSlice = Math.min(5, numWorkers)
-    val trainingRDD = sc.parallelize(Ranking.train, numSlice)
+    val trainingRDD = sc.parallelize(Ranking.train, 5)
     val (booster, _) = XGBoost.trainDistributed(
       trainingRDD,
       List("eta" -> "1", "max_depth" -> "6",
-        "objective" -> "rank:pairwise", "num_round" -> 5, "num_workers" -> numSlice,
+        "objective" -> "rank:pairwise", "num_round" -> 5, "num_workers" -> numWorkers,
         "custom_eval" -> null, "custom_obj" -> null, "use_external_memory" -> false,
         "missing" -> Float.NaN).toMap,
       hasGroup = true)
@@ -332,12 +272,11 @@ class XGBoostGeneralSuite extends FunSuite with PerTest {
   }
 
   test("train with multiple validation datasets (ranking)") {
-    val numSlice = Math.min(5, numWorkers)
-    val training = buildDataFrameWithGroup(Ranking.train, numSlice)
+    val training = buildDataFrameWithGroup(Ranking.train, 5)
     val Array(train, eval1, eval2) = training.randomSplit(Array(0.6, 0.2, 0.2), 0)
     val paramMap1 = Map("eta" -> "1", "max_depth" -> "6",
       "objective" -> "rank:pairwise",
-      "num_round" -> 5, "num_workers" -> numSlice, "group_col" -> "group")
+      "num_round" -> 5, "num_workers" -> numWorkers, "group_col" -> "group")
     val xgb1 = new XGBoostRegressor(paramMap1).setEvalSets(Map("eval1" -> eval1, "eval2" -> eval2))
     val model1 = xgb1.fit(train)
     assert(model1 != null)
@@ -350,7 +289,7 @@ class XGBoostGeneralSuite extends FunSuite with PerTest {
 
     val paramMap2 = Map("eta" -> "1", "max_depth" -> "6",
       "objective" -> "rank:pairwise",
-      "num_round" -> 5, "num_workers" -> numSlice, "group_col" -> "group",
+      "num_round" -> 5, "num_workers" -> numWorkers, "group_col" -> "group",
       "eval_sets" -> Map("eval1" -> eval1, "eval2" -> eval2))
     val xgb2 = new XGBoostRegressor(paramMap2)
     val model2 = xgb2.fit(train)
@@ -405,12 +344,21 @@ class XGBoostGeneralSuite extends FunSuite with PerTest {
     val modelPath = getClass.getResource("/model/0.82/model").getPath
     val model = XGBoostClassificationModel.read.load(modelPath)
     val r = new Random(0)
-    val df = ss.createDataFrame(Seq.fill(100000)(1).map(i => (i, i))).
+    var df = ss.createDataFrame(Seq.fill(100000)(1).map(i => (i, i))).
       toDF("feature", "label").repartition(5)
+    // 0.82/model was trained with 251 features. and transform will throw exception
+    // if feature size of data is not equal to 251
+    for (x <- 1 to 250) {
+      df = df.withColumn(s"feature_${x}", lit(1))
+    }
     val assembler = new VectorAssembler()
       .setInputCols(df.columns.filter(!_.contains("label")))
       .setOutputCol("features")
-    val df1 = model.transform(assembler.transform(df)).withColumnRenamed(
+    df = assembler.transform(df)
+    for (x <- 1 to 250) {
+      df = df.drop(s"feature_${x}")
+    }
+    val df1 = model.transform(df).withColumnRenamed(
       "prediction", "prediction1").withColumnRenamed(
       "rawPrediction", "rawPrediction1").withColumnRenamed(
       "probability", "probability1")
@@ -418,4 +366,5 @@ class XGBoostGeneralSuite extends FunSuite with PerTest {
     df1.collect()
     df2.collect()
   }
+
 }

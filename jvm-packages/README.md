@@ -99,27 +99,22 @@ spark.read.format("libsvm").load("trainingset_libsvm")
 
 Spark assumes that the dataset is 1-based indexed. However, when you do prediction with other bindings of XGBoost (e.g. Python API of XGBoost), XGBoost assumes that the dataset is 0-based indexed. It creates a pitfall for the users who train model with Spark but predict with the dataset in the same format in other bindings of XGBoost.
 
-## NOTE on Python
-
-There is a Python library for XGBoost4J-Spark under `xgboost4j-spark/src/main/resources`. You may take the xgboost4j-spark jar file as a Python library and develop your code based on it. This solution comes from [here](https://github.com/dmlc/xgboost/pull/4656).
-
-[NumPy](https://numpy.org/) is required.
-
 ## Development
 
-You can build/package xgboost4j and xgboost4j-spark locally with the following steps:
+You can build/package xgboost4j locally with the following steps:
 
-1. Ensure [Docker](https://docs.docker.com/install/) is installed.
-2. Build a docker image with [Dockerfile.centos7_build](../jenkins/local/Dockerfile.centos7_build), create a docker container based on that image, then enter that docker container.
-3. Follow below steps within the docker container:
-  - Install git and clone the code
-  - Enter the jvm-packages folder: `cd xgboost/jvm-packages`
-  - Enable devtoolset-7: `scl enable devtoolset-7 bash`
-  - Activate cuda 9.2: `. /opt/tools/to_cuda9.2.sh`
-  - Clean cache for native build: `rm -rf ../build`
-  - Compile native code with cuda 9.2: `./create_jni.py cuda9.2`
-  - Activate cuda 10.0: `. /opt/tools/to_cuda10.0.sh`
-  - Clean cache for native build: `rm -rf ../build`
-  - Compile native code with cuda 10.0 and build .jar packages: `mvn clean package`
+**Linux:**
+1. Ensure [Docker for Linux](https://docs.docker.com/install/) is installed.
+2. Clone this repo: `git clone --recursive https://github.com/dmlc/xgboost.git`
+3. Run the following command:
+  - With Tests: `./xgboost/jvm-packages/dev/build-linux.sh`
+  - Skip Tests: `./xgboost/jvm-packages/dev/build-linux.sh --skip-tests` 
+
+**Windows:**
+1. Ensure [Docker for Windows](https://docs.docker.com/docker-for-windows/install/) is installed.
+2. Clone this repo: `git clone --recursive https://github.com/dmlc/xgboost.git`
+3. Run the following command:
+  - With Tests: `.\xgboost\jvm-packages\dev\build-linux.cmd`
+  - Skip Tests: `.\xgboost\jvm-packages\dev\build-linux.cmd --skip-tests`
 
 *Note: this will create jars for deployment on Linux machines.*

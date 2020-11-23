@@ -16,16 +16,13 @@
 package ml.dmlc.xgboost4j.java;
 
 import java.io.*;
+import java.lang.reflect.Field;
 import java.net.URISyntaxException;
-import java.net.URL;
-import java.nio.file.FileSystems;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Collections;
-import java.util.Optional;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+
+import ml.dmlc.xgboost4j.java.rapids.EnvironmentDetector;
 
 /**
  * class to load native library
@@ -39,12 +36,13 @@ class NativeLibLoader {
   private static final String nativeResourcePath = "/lib/";
   private static final String[] libNames = new String[]{"xgboost4j"};
 
-  static synchronized void initXGBoost() throws IOException, URISyntaxException{
+  static synchronized void initXGBoost() throws IOException, URISyntaxException {
     if (!initialized) {
-      String sub = getSubFolder();
+      String sub = EnvironmentDetector.getSubFolder(nativeResourcePath);
       for (String libName : libNames) {
         try {
           String libraryFromJar = nativeResourcePath + sub + System.mapLibraryName(libName);
+          logger.info("loading " + libraryFromJar);
           loadLibraryFromJar(libraryFromJar);
         } catch (IOException ioe) {
           logger.error("failed to load " + libName + " library from jar");
@@ -52,34 +50,6 @@ class NativeLibLoader {
         }
       }
       initialized = true;
-    }
-  }
-
-  private static String getSubFolder() throws IOException, URISyntaxException {
-    Optional<String> sub = EnvironmentDetector.getCudaVersion()
-        .map(version -> {
-        assert version.indexOf('.') + 2 <= version.length(): "cuda version format error!";
-          String mainVersion = version.indexOf('.') > 0
-              ? version.substring(0, version.indexOf('.') + 2)
-              : version;
-          String folder = "cuda" + mainVersion + "/";
-          logger.info(String.format("found folder %s for CUDA %s", folder, version));
-          return folder;
-        });
-    if (sub.isPresent()) {
-      return sub.get();
-    } else {
-      // No version found, pick the first one
-      URL resUrl = NativeLibLoader.class.getResource(nativeResourcePath);
-      Path libPath = FileSystems.newFileSystem(resUrl.toURI(), Collections.emptyMap())
-          .getPath(nativeResourcePath);
-      String firstFolder = Files.list(libPath)
-          .map(Path::getFileName)
-          .findFirst()
-          .get()
-          .toString();
-      logger.info("No cuda version is found, instead use the first one: " + firstFolder);
-      return firstFolder;
     }
   }
 
