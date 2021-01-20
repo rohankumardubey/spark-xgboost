@@ -18,6 +18,8 @@ package ml.dmlc.xgboost4j.java;
 import java.util.Iterator;
 
 import ml.dmlc.xgboost4j.LabeledPoint;
+import ml.dmlc.xgboost4j.java.rapids.ColumnBatch;
+import ml.dmlc.xgboost4j.java.rapids.CudfTable;
 import ml.dmlc.xgboost4j.java.util.BigDenseMatrix;
 
 /**
@@ -34,6 +36,29 @@ public class DMatrix {
   public static enum SparseType {
     CSR,
     CSC;
+  }
+
+  public DMatrix(Iterator<CudfTable> iter, float missing, int maxBin, int nthread)
+      throws XGBoostError {
+    long[] out = new long[1];
+    Iterator<ColumnBatch> batchIter = new ColumnBatch.ColumnBatchBatchIterator(iter);
+    XGBoostJNI.checkCall(XGBoostJNI.XGDeviceQuantileDMatrixCreateFromCallback(
+        batchIter, missing, maxBin, nthread, out));
+    handle = out[0];
+  }
+
+  /**
+   * Create DMatrix from column array interface
+   * @param json array interface
+   * @param missing missing value
+   * @param nthread threads number
+   * @throws XGBoostError
+   */
+  public DMatrix(String json, float missing, int nthread) throws XGBoostError {
+    long[] out = new long[1];
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixCreateFromArrayInterfaceColumns(
+        json, missing, nthread, out));
+    handle = out[0];
   }
 
   /**
@@ -173,6 +198,36 @@ public class DMatrix {
     this.handle = handle;
   }
 
+  /**
+   * set label of dmatrix from column array interface
+   *
+   * @param labelJson label column array interface
+   * @throws XGBoostError native error
+   */
+  public void setLabel(String labelJson) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetInfoFromInterface(handle, "label", labelJson));
+  }
+
+  /**
+   * set label of dmatrix from column array interface
+   *
+   * @param weightJson weight column array interface
+   * @throws XGBoostError native error
+   */
+  public void setWeight(String weightJson) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetInfoFromInterface(handle, "weight", weightJson));
+  }
+
+  /**
+   * set label of dmatrix from column array interface
+   *
+   * @param baseMarginJson base margin column array interface
+   * @throws XGBoostError native error
+   */
+  public void setBaseMargin(String baseMarginJson) throws XGBoostError {
+    XGBoostJNI.checkCall(XGBoostJNI.XGDMatrixSetInfoFromInterface(handle, "base_margin",
+        baseMarginJson));
+  }
 
   /**
    * set label of dmatrix

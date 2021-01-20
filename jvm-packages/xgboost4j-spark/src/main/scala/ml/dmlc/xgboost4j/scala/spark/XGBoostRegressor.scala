@@ -18,14 +18,13 @@ package ml.dmlc.xgboost4j.scala.spark
 
 import scala.collection.{AbstractIterator, Iterator, mutable}
 import scala.collection.JavaConverters._
-
 import ml.dmlc.xgboost4j.java.{Rabit, XGBoost => JXGBoost}
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
 import ml.dmlc.xgboost4j.scala.spark.params.{DefaultXGBoostParamsReader, _}
+import ml.dmlc.xgboost4j.scala.spark.rapids.{GpuSampler, GpuTransform, GpuUtils, GpuXGBoost, MLUtils => RapidsUtils}
 import ml.dmlc.xgboost4j.scala.{Booster, DMatrix, XGBoost => SXGBoost}
 import ml.dmlc.xgboost4j.scala.{EvalTrait, ObjectiveTrait}
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.TaskContext
 import org.apache.spark.ml.linalg.{DenseVector, SparseVector, Vector}
 import org.apache.spark.ml.param.shared.HasWeightCol
@@ -37,8 +36,8 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 import org.json4s.DefaultFormats
-import scala.collection.mutable.ListBuffer
 
+import scala.collection.mutable.ListBuffer
 import org.apache.spark.broadcast.Broadcast
 
 class XGBoostRegressor (
@@ -55,6 +54,10 @@ class XGBoostRegressor (
     Identifiable.randomUID("xgbr"), xgboostParams)
 
   XGBoost2MLlibParams(xgboostParams)
+
+  private[spark] def getUserParams = xgboostParams
+
+  def setFeaturesCols(value: Seq[String]): this.type = set(featuresCols, value)
 
   def setWeightCol(value: String): this.type = set(weightCol, value)
 
@@ -163,6 +166,20 @@ class XGBoostRegressor (
     }
   }
 
+  override def fit(dataset: Dataset[_]): XGBoostRegressionModel = {
+    if (GpuUtils.isRapidsEnabled(dataset)) GpuXGBoost.fitOnGpu(this, dataset, None)
+    else super.fit(dataset)
+  }
+
+  // for CrossValidator
+  private[spark] def trainWithGpuSampler(dataset: Dataset[_], sampler: Option[GpuSampler]):
+      XGBoostRegressionModel = {
+    if (sampler.isEmpty) {
+      new IllegalArgumentException("GpuSampler should not be None")
+    }
+    GpuXGBoost.fitOnGpu(this, dataset, sampler)
+  }
+
   override protected def train(dataset: Dataset[_]): XGBoostRegressionModel = {
 
     if (!isDefined(evalMetric) || $(evalMetric).isEmpty) {
@@ -201,6 +218,7 @@ class XGBoostRegressor (
   }
 
   override def copy(extra: ParamMap): XGBoostRegressor = defaultCopy(extra)
+
 }
 
 object XGBoostRegressor extends DefaultParamsReadable[XGBoostRegressor] {
@@ -240,6 +258,11 @@ class XGBoostRegressionModel private[ml] (
     trainingSummary = Some(summary)
     this
   }
+
+  def setBuildAllColumnsInTransform(value: Boolean): this.type =
+    set(buildAllColumnsInTransform, value)
+
+  def setFeaturesCols(value: Seq[String]): this.type = set(featuresCols, value)
 
   def setLeafPredictionCol(value: String): this.type = set(leafPredictionCol, value)
 
@@ -379,7 +402,7 @@ class XGBoostRegressionModel private[ml] (
     resultSchema
   }
 
-  private def producePredictionItrs(booster: Broadcast[Booster], dm: DMatrix):
+  private[spark] def producePredictionItrs(booster: Broadcast[Booster], dm: DMatrix):
       Array[Iterator[Row]] = {
     val originalPredictionItr = {
       booster.value.predict(dm, outPutMargin = false, $(treeLimit)).map(Row(_)).iterator
@@ -404,10 +427,14 @@ class XGBoostRegressionModel private[ml] (
   }
 
   override def transform(dataset: Dataset[_]): DataFrame = {
-    transformSchema(dataset.schema, logging = true)
     // Output selected columns only.
     // This is a bit complicated since it tries to avoid repeated computation.
-    var outputData = transformInternal(dataset)
+    var outputData = if (GpuUtils.isRapidsEnabled(dataset)) {
+      GpuTransform.transformInternal(this, dataset, true, None)
+    } else {
+      transformSchema(dataset.schema, logging = true)
+      transformInternal(dataset)
+    }
     var numColsOutput = 0
 
     val predictUDF = udf { (originalPrediction: mutable.WrappedArray[Float]) =>
@@ -434,11 +461,38 @@ class XGBoostRegressionModel private[ml] (
 
   override def write: MLWriter =
     new XGBoostRegressionModel.XGBoostRegressionModelWriter(this)
+
+  // used for CrossValidator
+  private[spark] def transformWithGpuSampler(dataset: Dataset[_], sampler: Option[GpuSampler]):
+      DataFrame = {
+    if (sampler.isEmpty) {
+      new IllegalArgumentException("sampler should not be None")
+    }
+
+    var outputData = GpuTransform.transformInternal(this, dataset, true, sampler)
+    var numColsOutput = 0
+
+    val predictUDF = udf { (originalPrediction: mutable.WrappedArray[Float]) =>
+      originalPrediction(0).toDouble
+    }
+
+    if ($(predictionCol).nonEmpty) {
+      outputData = outputData
+        .withColumn($(predictionCol), predictUDF(col(_originalPredictionCol)))
+      numColsOutput += 1
+    }
+
+    if (numColsOutput == 0) {
+      this.logWarning(s"$uid: ProbabilisticClassificationModel.transform() was called as NOOP" +
+        " since no output columns were set.")
+    }
+    outputData.toDF.drop(col(_originalPredictionCol))
+  }
 }
 
 object XGBoostRegressionModel extends MLReadable[XGBoostRegressionModel] {
 
-  private val _originalPredictionCol = "_originalPrediction"
+  private[spark] val _originalPredictionCol = "_originalPrediction"
 
   override def read: MLReader[XGBoostRegressionModel] = new XGBoostRegressionModelReader
 

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from cudautils import cudaver
 
 # Monkey-patch the API inconsistency between Python2.X and 3.X.
 if sys.platform.startswith("linux"):
@@ -19,8 +20,9 @@ CONFIG = {
     "USE_AZURE": "OFF",
     "USE_S3": "OFF",
 
-    "USE_CUDA": "OFF",
-    "USE_NCCL": "OFF",
+    "USE_CUDA": "ON",
+    "USE_NCCL": "ON",
+    "PLUGIN_RMM": "ON",
     "JVM_BINDINGS": "ON",
     "LOG_CAPI_INVOCATION": "OFF"
 }
@@ -81,7 +83,8 @@ if __name__ == "__main__":
         os.environ["JAVA_HOME"] = subprocess.check_output(
             "/usr/libexec/java_home").strip().decode()
 
-    print("building Java wrapper")
+    cuda = cudaver()
+    print("building Java wrapper on " + cuda)
     with cd(".."):
         maybe_makedirs("build")
         with cd("build"):
@@ -129,8 +132,9 @@ if __name__ == "__main__":
         "darwin": "libxgboost4j.dylib",
         "linux": "libxgboost4j.so"
     }[sys.platform]
-    maybe_makedirs("{}/src/main/resources/lib".format(xgboost4j))
-    cp("../lib/" + library_name, "{}/src/main/resources/lib".format(xgboost4j))
+
+    maybe_makedirs("xgboost4j/src/main/resources/lib/" + cuda)
+    cp("../lib/" + library_name, "xgboost4j/src/main/resources/lib/" + cuda)
 
     print("copying pure-Python tracker")
     cp("../dmlc-core/tracker/dmlc_tracker/tracker.py",
@@ -150,3 +154,4 @@ if __name__ == "__main__":
     maybe_makedirs("{}/src/test/resources".format(xgboost4j))
     for file in glob.glob("../demo/data/agaricus.*"):
         cp(file, "{}/src/test/resources".format(xgboost4j))
+

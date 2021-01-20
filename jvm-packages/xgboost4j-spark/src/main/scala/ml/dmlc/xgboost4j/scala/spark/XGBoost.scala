@@ -24,6 +24,7 @@ import scala.util.Random
 import scala.collection.JavaConverters._
 import ml.dmlc.xgboost4j.java.{IRabitTracker, Rabit, XGBoostError, RabitTracker => PyRabitTracker}
 import ml.dmlc.xgboost4j.scala.rabit.RabitTracker
+import ml.dmlc.xgboost4j.scala.spark.rapids.GpuXGBoost
 import ml.dmlc.xgboost4j.scala.spark.params.LearningTaskParams
 import ml.dmlc.xgboost4j.scala.ExternalCheckpointManager
 import ml.dmlc.xgboost4j.scala.{XGBoost => SXGBoost, _}
@@ -61,7 +62,7 @@ private[this] case class XGBoostExecutionEarlyStoppingParams(numEarlyStoppingRou
 
 private[this] case class XGBoostExecutionInputParams(trainTestRatio: Double, seed: Long)
 
-private[this] case class XGBoostExecutionParams(
+private[spark] case class XGBoostExecutionParams(
     numWorkers: Int,
     numRounds: Int,
     useExternalMemory: Boolean,
@@ -90,7 +91,7 @@ private[this] case class XGBoostExecutionParams(
   }
 }
 
-private[this] class XGBoostExecutionParamsFactory(rawParams: Map[String, Any], sc: SparkContext){
+private[spark] class XGBoostExecutionParamsFactory(rawParams: Map[String, Any], sc: SparkContext){
 
   private val logger = LogFactory.getLog("XGBoostSpark")
 
@@ -174,6 +175,7 @@ private[this] class XGBoostExecutionParamsFactory(rawParams: Map[String, Any], s
     var treeMethod: Option[String] = None
     if (overridedParams.contains("tree_method")) {
       require(overridedParams("tree_method") == "hist" ||
+        overridedParams("tree_method") == "gpu_hist" ||
         overridedParams("tree_method") == "approx" ||
         overridedParams("tree_method") == "auto" ||
         overridedParams("tree_method") == "gpu_hist", "xgboost4j-spark only supports tree_method" +
@@ -337,7 +339,7 @@ object XGBoost extends Serializable {
     }
   }
 
-  private def getCacheDirName(useExternalMemory: Boolean): Option[String] = {
+  private[spark] def getCacheDirName(useExternalMemory: Boolean): Option[String] = {
     val taskId = TaskContext.getPartitionId().toString
     if (useExternalMemory) {
       val dir = Files.createTempDirectory(s"${TaskContext.get().stageId()}-cache-$taskId")
@@ -367,7 +369,7 @@ object XGBoost extends Serializable {
     }
   }
 
-  private def buildDistributedBooster(
+  private[spark] def buildDistributedBooster(
       watches: Watches,
       xgbExecutionParam: XGBoostExecutionParams,
       rabitEnv: java.util.Map[String, String],
@@ -390,6 +392,7 @@ object XGBoost extends Serializable {
     val makeCheckpoint = xgbExecutionParam.checkpointParam.isDefined && taskId.toInt == 0
     try {
       Rabit.init(rabitEnv)
+      GpuXGBoost.checkNumClass(watches, xgbExecutionParam.toMap)
       val numEarlyStoppingRounds = xgbExecutionParam.earlyStoppingParams.numEarlyStoppingRounds
       val metrics = Array.tabulate(watches.size)(_ => Array.ofDim[Float](numRounds))
       val externalCheckpointParams = xgbExecutionParam.checkpointParam
@@ -426,7 +429,7 @@ object XGBoost extends Serializable {
     }
   }
 
-  private def startTracker(nWorkers: Int, trackerConf: TrackerConf): IRabitTracker = {
+  private[spark] def startTracker(nWorkers: Int, trackerConf: TrackerConf): IRabitTracker = {
     val tracker: IRabitTracker = trackerConf.trackerImpl match {
       case "scala" => new RabitTracker(nWorkers)
       case "python" => new PyRabitTracker(nWorkers)
@@ -720,7 +723,7 @@ object XGBoost extends Serializable {
     }
   }
 
-  private def postTrackerReturnProcessing(
+  private[spark] def postTrackerReturnProcessing(
       trackerReturnVal: Int,
       distributedBoostersAndMetrics: RDD[(Booster, Map[String, Array[Float]])],
       sparkJobThread: Thread): (Booster, Map[String, Array[Float]]) = {
@@ -749,7 +752,7 @@ object XGBoost extends Serializable {
 
 }
 
-private class Watches private(
+private class Watches (
     val datasets: Array[DMatrix],
     val names: Array[String],
     val cacheDirName: Option[String]) {

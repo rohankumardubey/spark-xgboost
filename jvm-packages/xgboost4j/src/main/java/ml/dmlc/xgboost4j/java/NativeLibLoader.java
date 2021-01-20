@@ -17,9 +17,12 @@ package ml.dmlc.xgboost4j.java;
 
 import java.io.*;
 import java.lang.reflect.Field;
+import java.net.URISyntaxException;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+
+import ml.dmlc.xgboost4j.java.rapids.EnvironmentDetector;
 
 /**
  * class to load native library
@@ -33,11 +36,13 @@ class NativeLibLoader {
   private static final String nativeResourcePath = "/lib/";
   private static final String[] libNames = new String[]{"xgboost4j"};
 
-  static synchronized void initXGBoost() throws IOException {
+  static synchronized void initXGBoost() throws IOException, URISyntaxException {
     if (!initialized) {
+      String sub = EnvironmentDetector.getSubFolder(nativeResourcePath);
       for (String libName : libNames) {
         try {
-          String libraryFromJar = nativeResourcePath + System.mapLibraryName(libName);
+          String libraryFromJar = nativeResourcePath + sub + System.mapLibraryName(libName);
+          logger.info("loading " + libraryFromJar);
           loadLibraryFromJar(libraryFromJar);
         } catch (IOException ioe) {
           logger.error("failed to load " + libName + " library from jar");

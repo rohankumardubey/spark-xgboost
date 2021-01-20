@@ -17,11 +17,12 @@
 package ml.dmlc.xgboost4j.scala.spark
 
 import ml.dmlc.xgboost4j.scala.spark.params._
+import ml.dmlc.xgboost4j.scala.spark.rapids.{RapidsParams => GpuParams}
 
 import org.apache.spark.ml.param.shared.HasWeightCol
 
 private[spark] sealed trait XGBoostEstimatorCommon extends GeneralParams with LearningTaskParams
-  with BoosterParams with RabitParams with ParamMapFuncs with NonParamVariables {
+  with BoosterParams with RabitParams with ParamMapFuncs with NonParamVariables with GpuParams {
 
   def needDeterministicRepartitioning: Boolean = {
     getCheckpointPath != null && getCheckpointPath.nonEmpty && getCheckpointInterval > 0
