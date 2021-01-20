@@ -1176,4 +1176,13 @@ XGB_DLL int XGBoosterSetStrFeatureInfo(BoosterHandle handle, const char *field,
 XGB_DLL int XGBoosterGetStrFeatureInfo(BoosterHandle handle, const char *field,
                                        bst_ulong *len,
                                        const char ***out_features);
+
+XGB_DLL int XGDMatrixCreateFromArrayInterfaceColumns(char const* c_json_strs,
+                                                     float missing,
+                                                     int nthread,
+                                                     DMatrixHandle* out);
+
+XGB_DLL int XGDMatrixSetInfoFromInterface(DMatrixHandle handle,
+                                          char const* field,
+                                          char const* interface_c_str);
 #endif  // XGBOOST_C_API_H_

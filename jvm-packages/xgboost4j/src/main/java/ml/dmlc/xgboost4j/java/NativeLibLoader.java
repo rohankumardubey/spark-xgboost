@@ -21,10 +21,13 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URISyntaxException;
 import java.util.Locale;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+
+import ml.dmlc.xgboost4j.java.rapids.EnvironmentDetector;
 
 /**
  * class to load native library
@@ -35,11 +38,11 @@ class NativeLibLoader {
   private static final Log logger = LogFactory.getLog(NativeLibLoader.class);
 
   private static boolean initialized = false;
-  private static final String nativeResourcePath = "/lib";
+  private static final String nativeResourcePath = "/lib/";
   private static final String[] libNames = new String[]{"xgboost4j"};
 
-  static synchronized void initXGBoost() throws IOException {
-    if (!initialized) {
+  static synchronized void initXGBoost() throws IOException, URISyntaxException {
+    if (!initialized && false) {
       String platform = computePlatformArchitecture();
       for (String libName : libNames) {
         try {
@@ -48,6 +51,21 @@ class NativeLibLoader {
           loadLibraryFromJar(libraryPathInJar);
         } catch (IOException ioe) {
           logger.error("failed to load " + libName + " library from jar for platform " + platform);
+          throw ioe;
+        }
+      }
+      initialized = true;
+    }
+
+    if (!initialized) {
+      String sub = EnvironmentDetector.getSubFolder(nativeResourcePath);
+      for (String libName : libNames) {
+        try {
+          String libraryFromJar = nativeResourcePath + sub + System.mapLibraryName(libName);
+          logger.info("loading " + libraryFromJar);
+          loadLibraryFromJar(libraryFromJar);
+        } catch (IOException ioe) {
+          logger.error("failed to load " + libName + " library from jar");
           throw ioe;
         }
       }

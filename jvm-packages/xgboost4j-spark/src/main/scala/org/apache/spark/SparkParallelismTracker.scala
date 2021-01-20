@@ -43,7 +43,7 @@ class SparkParallelismTracker(
     sc.statusStore.executorList(true).map(_.totalCores).sum
   }
 
-  private[this] def waitForCondition(
+  protected[this] def waitForCondition(
       condition: => Boolean,
       timeout: Long,
       checkInterval: Long = 100L) = {
@@ -61,7 +61,7 @@ class SparkParallelismTracker(
     waitImpl(0L, condition)
   }
 
-  private[this] def safeExecute[T](body: => T): T = {
+  protected[this] def safeExecute[T](body: => T): T = {
     val listener = new TaskFailedListener(killSparkContextOnWorkerFailure)
     sc.addSparkListener(listener)
     try {
@@ -70,6 +70,11 @@ class SparkParallelismTracker(
       sc.removeSparkListener(listener)
     }
   }
+
+  protected[this] def numAliveWorkers: Int =
+    sc.statusStore.executorList(true).size
+
+  protected[this] def isActiveCoresEnough: Boolean = numAliveCores >= requestedCores
 
   /**
    * Execute a blocking function call with two checks on enough nWorkers:

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import contextmanager
+from cudautils import cudaver
 
 # Monkey-patch the API inconsistency between Python2.X and 3.X.
 if sys.platform.startswith("linux"):
@@ -20,8 +21,9 @@ CONFIG = {
     "USE_AZURE": "OFF",
     "USE_S3": "OFF",
 
-    "USE_CUDA": "OFF",
-    "USE_NCCL": "OFF",
+    "USE_CUDA": "ON",
+    "USE_NCCL": "ON",
+    "PLUGIN_RMM": "ON",
     "JVM_BINDINGS": "ON",
     "LOG_CAPI_INVOCATION": "OFF"
 }
@@ -82,7 +84,8 @@ if __name__ == "__main__":
         os.environ["JAVA_HOME"] = subprocess.check_output(
             "/usr/libexec/java_home").strip().decode()
 
-    print("building Java wrapper")
+    cuda = cudaver()
+    print("building Java wrapper on " + cuda)
     with cd(".."):
         build_dir = 'build-gpu' if cli_args.use_cuda == 'ON' else 'build'
         maybe_makedirs(build_dir)
@@ -129,23 +132,14 @@ if __name__ == "__main__":
     xgboost4j_spark = 'xgboost4j-spark-gpu' if cli_args.use_cuda == 'ON' else 'xgboost4j-spark'
 
     print("copying native library")
-    library_name, os_folder = {
-        "Windows": ("xgboost4j.dll", "windows"),
-        "Darwin": ("libxgboost4j.dylib", "macos"),
-        "Linux": ("libxgboost4j.so", "linux"),
-        "SunOS": ("libxgboost4j.so", "solaris"),
-    }[platform.system()]
-    arch_folder = {
-        "x86_64": "x86_64",  # on Linux & macOS x86_64
-        "amd64": "x86_64",  # on Windows x86_64
-        "i86pc": "x86_64",  # on Solaris x86_64
-        "sun4v": "sparc",  # on Solaris sparc
-        "arm64": "aarch64",  # on macOS & Windows ARM 64-bit
-        "aarch64": "aarch64"
-    }[platform.machine().lower()]
-    output_folder = "{}/src/main/resources/lib/{}/{}".format(xgboost4j, os_folder, arch_folder)
-    maybe_makedirs(output_folder)
-    cp("../lib/" + library_name, output_folder)
+    library_name = {
+        "win32": "xgboost4j.dll",
+        "darwin": "libxgboost4j.dylib",
+        "linux": "libxgboost4j.so"
+    }[sys.platform]
+
+    maybe_makedirs("xgboost4j/src/main/resources/lib/" + cuda)
+    cp("../lib/" + library_name, "xgboost4j/src/main/resources/lib/" + cuda)
 
     print("copying pure-Python tracker")
     cp("../dmlc-core/tracker/dmlc_tracker/tracker.py",
@@ -165,3 +159,4 @@ if __name__ == "__main__":
     maybe_makedirs("{}/src/test/resources".format(xgboost4j))
     for file in glob.glob("../demo/data/agaricus.*"):
         cp(file, "{}/src/test/resources".format(xgboost4j))
+
