@@ -45,7 +45,9 @@ public class EnvironmentDetector {
           String mainVersion = version.indexOf('.') > 0
               ? version.substring(0, version.indexOf('.') + 2)
               : version;
-          String folder = "cuda" + mainVersion + "/";
+
+          String[] bigVersion = mainVersion.split("\\.");
+          String folder = "cuda" + bigVersion[0] + "/";
           log.info(String.format("found folder %s for CUDA %s", folder, version));
           return folder;
         });
@@ -90,7 +92,7 @@ public class EnvironmentDetector {
             "Cuda compilation tools, release [.0-9]+, V([.0-9]+)");
         version.ifPresent(literal -> log.info("Found CUDA version from nvcc command: " + literal));
       } catch (IOException | InterruptedException e) {
-        log.info("Could not get CUDA version with \"nvcc --version\"");
+        log.debug("Could not get CUDA version with \"nvcc --version\"");
         version = Optional.empty();
       }
     }
@@ -103,7 +105,7 @@ public class EnvironmentDetector {
           "Cuda compilation tools, release [.0-9]+, V([.0-9]+)");
         version.ifPresent(literal -> log.info("Found CUDA version from nvcc command: " + literal));
       } catch (IOException | InterruptedException e) {
-        log.info("Could not get CUDA version with \"/usr/local/cuda/bin/nvcc --version\"");
+        log.debug("Could not get CUDA version with \"/usr/local/cuda/bin/nvcc --version\"");
         version = Optional.empty();
       }
     }
@@ -118,7 +120,7 @@ public class EnvironmentDetector {
           log.info("Found CUDA version from /usr/local/cuda/version.txt: " + literal);
         });
       } catch (IOException e) {
-        log.info("Could not read CUDA version from CUDA home");
+        log.debug("Could not read CUDA version from CUDA home");
         version = Optional.empty();
       }
     }

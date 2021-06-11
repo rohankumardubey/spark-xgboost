@@ -61,7 +61,7 @@ public:
 #if defined(XGBOOST_USE_RMM) && XGBOOST_USE_RMM == 1
     rmm::mr::device_memory_resource *mr = rmm::mr::get_current_device_resource();
     try {
-      ptr = mr->allocate(_size, nullptr);
+      ptr = mr->allocate(_size);
     } catch (rmm::bad_alloc const& e) {
       auto what = std::string("Could not allocate memory from RMM: ") +
         (e.what() == nullptr ? "" : e.what());

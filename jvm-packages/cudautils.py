@@ -7,9 +7,7 @@ import sys
 # version -> classifier
 # '' means default classifier
 cuda_vers = {
-  '10.1': ['cuda10-1', ''],
-  '10.2': ['cuda10-2'],
-  '11.0': ['cuda11']
+  '11': ['cuda11']
 }
 
 def check_classifier(classifier):
@@ -49,7 +47,7 @@ def detect_cuda_ver():
     Detect the cuda version from current nvcc tool.
     '''
     nvcc_ver_bin = subprocess.check_output('nvcc --version', shell=True)
-    nvcc_ver = re.search('release ([.0-9]+), V([.0-9]+)', str(nvcc_ver_bin)).group(1)
+    nvcc_ver = re.search('release ([0-9]+).[0-9], V([.0-9]+)', str(nvcc_ver_bin)).group(1)
     if nvcc_ver in get_supported_vers():
         return nvcc_ver
     else:
