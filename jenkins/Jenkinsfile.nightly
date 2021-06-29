@@ -1,0 +1,145 @@
+#!/usr/bin/groovy
+@Library(['shared-libs', 'spark-jenkins-shared-lib']) _
+
+def artUrl="https://${ArtifactoryConstants.ARTIFACTORY_NAME}/artifactory/sw-spark-maven"
+def localUrl=''
+try { localUrl="${SERVER_LOCAL_URL}" } catch (Exception e) { }
+
+// -*- mode: groovy -*-
+// Jenkins pipeline
+// See documents at https://jenkins.io/doc/book/pipeline/jenkinsfile/
+
+import groovy.transform.Field
+
+/* Unrestricted tasks: tasks that do NOT generate artifacts */
+
+// Utility functions
+@Field
+def utils
+
+def SERVERS_MAP = [
+    'Art': ["${artUrl}-local", 'snapshots'],
+    'Local': ["${localUrl}", 'spark.sw.nvidia.com'],
+
+]
+
+pipeline {
+    agent any
+
+    // Setup common job properties
+    options {
+        ansiColor('xterm')
+        timestamps()
+        timeout(time: 360, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        gitLabConnection('GitLab Master')
+    }
+
+    parameters {
+        choice(name: 'DEPLOY_TYPE', choices: ['Art', 'Local'],
+            description: 'REPO where to deploy xgboost artifacts')
+        string(name: 'REF', defaultValue: 'nv-release-1.4.0', description: 'Commit to build')
+    }
+
+    environment {
+        LOCAL_ROOT='jenkins/local'
+        BUILD_SCRIPT='$LOCAL_ROOT/build-jvm-multi.sh'
+        DEPLOY_SCRIPT='$LOCAL_ROOT/deploy-jvm-multi.sh'
+        SERVER_URL = "${SERVERS_MAP["$DEPLOY_TYPE"][0]}"
+        SERVER_ID = "${SERVERS_MAP["$DEPLOY_TYPE"][1]}"
+        ART_CREDS = credentials("svcngcc_artifactory")
+        ART_URL="${artUrl}"
+        ARTIFACTORY_NAME = "${ArtifactoryConstants.ARTIFACTORY_NAME}"
+    }
+
+    triggers {
+        cron('H 0 * * *')
+    }
+
+    // Build stages
+    stages {
+        stage('Jenkins: Get sources') {
+            steps {
+                updateGitlabCommitStatus(name: 'Jenkins CI', state: 'running')
+                script {
+                    utils = load('tests/ci_build/jenkins_tools_spark.Groovy')
+                    utils.checkoutSrcs()
+                }
+                stash name: 'srcs', excludes: '.git/'
+                milestone label: 'Sources ready', ordinal: 1
+            }
+        }
+        stage('Jenkins: Build & Deploy') {
+            agent { label 'docker-gpu' }
+            environment {
+                // Local env for the current docker container
+                OUT="$WORKSPACE/out"
+                SIGN_FILE='false'
+            }
+            steps {
+                unstash name: 'srcs'
+                script {
+                    // prune unused images older than 48 hours
+                    sh 'docker image prune -a --force --filter "until=48h" || true'
+
+                    def IMAGE_NAME="$ARTIFACTORY_NAME/sw-spark-docker/xgboost:dev3-centos7-cuda11.2"
+                    sh "docker pull $IMAGE_NAME"
+                    def artImageID=sh(returnStdout: true, script: "docker inspect -f {{'.Id'}} $IMAGE_NAME")
+                    // Speed up Docker building via '--cache-from $IMAGE_NAME'
+                    def buildImage=docker.build(IMAGE_NAME,
+                        "-f jenkins/local/Dockerfile.centos7_build --cache-from $IMAGE_NAME jenkins/local")
+                    def buildImageID=sh(returnStdout: true, script: "docker inspect -f {{'.Id'}} $IMAGE_NAME")
+                    if (! buildImageID.equals(artImageID)) {
+                        echo "Dockerfile updated, upload docker image to artifactory"
+                        uploadDocker(IMAGE_NAME)
+                    }
+                    buildImage.inside("--runtime=nvidia") {
+                        sh "scl enable devtoolset-9 '$BUILD_SCRIPT $SIGN_FILE' "
+                        retry(3) {
+                            sh "bash $DEPLOY_SCRIPT $SIGN_FILE"
+                        }
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                if (currentBuild.currentResult == "SUCCESS") {
+                    updateGitlabCommitStatus(name: 'Jenkins CI', state: "success")
+                    slack("#swrapids-spark-cicd", "Success", color: "#33CC33")
+                } else {
+                    updateGitlabCommitStatus(name: 'Jenkins CI', state: "failed")
+                    slack("#swrapids-spark-cicd", "Failed", color: "#FF0000")
+                }
+                // this could be scheduled to any node w/ label:docker-gpu
+                node('docker-gpu') {
+                    sh 'docker image prune -a --force --filter "until=48h" || true'
+                }
+            }
+        }
+    }
+}
+
+void slack(Map params = [:], String channel, String message) {
+    Map defaultParams = [
+            color: "#000000",
+            baseUrl: "${SparkConstants.SLACK_API_ENDPOINT}",
+            tokenCredentialId: "slack_token"
+    ]
+
+    params["channel"] = channel
+    params["message"] = "${BUILD_URL}\n" + message
+
+    slackSend(defaultParams << params)
+}
+
+void uploadDocker(String IMAGE_NAME) {
+    def DOCKER_CMD="docker --config $WORKSPACE/.docker"
+    sh """
+        echo $ART_CREDS_PSW | $DOCKER_CMD login $ARTIFACTORY_NAME -u $ART_CREDS_USR --password-stdin
+        $DOCKER_CMD push $IMAGE_NAME
+        $DOCKER_CMD logout $ARTIFACTORY_NAME
+    """
+}

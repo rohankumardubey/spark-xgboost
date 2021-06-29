@@ -1,0 +1,70 @@
+#!/usr/local/env groovy
+/**
+*
+* Jenkins file to build xgboost with multi versions
+* and prepare bundle for release by single deployment.
+*/
+@Library('shared-libs') _
+
+pipeline {
+    agent { label 'docker-deploy||docker-gpu' }
+
+    options {
+        ansiColor('xterm')
+        timestamps()
+        timeout(time: 3, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    parameters {
+        string(name: 'DEPLOY_TO', defaultValue: 'https://oss.sonatype.org/service/local/staging/deploy/maven2',
+            description: 'The repo URL where to deploy the artifacts')
+        string(name: 'REF', defaultValue: 'rel-main', description: 'Commit to build')
+    }
+
+    environment {
+        OUT="$WORKSPACE/out"
+        LOCAL_ROOT='jenkins/local'
+        BUILD_SCRIPT="$LOCAL_ROOT/build-jvm-multi.sh"
+        DEPLOY_SCRIPT="$LOCAL_ROOT/deploy-jvm-multi.sh"
+        ART_URL = "https://${ArtifactoryConstants.ARTIFACTORY_NAME}/artifactory/sw-spark-maven"
+        IMAGE_NAME="${ArtifactoryConstants.ARTIFACTORY_NAME}/sw-spark-docker/xgboost:dev3-centos7-cuda11.2"
+    }
+
+    stages {
+        stage ('Build XGBoost') {
+            steps {
+                script {
+                    sh "rm -rf $OUT"
+                    sh "docker pull $IMAGE_NAME"
+                    docker.image("$IMAGE_NAME").inside("--runtime=nvidia") {
+                        sh "scl enable devtoolset-9 '$BUILD_SCRIPT true'"
+                    }
+                }
+            }
+        }
+
+        stage ("Deploy XGBoost") {
+            environment {
+                SERVER_ID='ossrh'
+                SERVER_URL="${DEPLOY_TO}"
+                GPG_PASSPHRASE=credentials('SPARK_RAPIDS_GPG_PASSPHRASE')
+                GPG_FILE=credentials('SPARK_RAPIDS_GPG_PRIVATE_KEY')
+                SONATYPE=credentials('SPARK_SONATYPE_USERPASS')
+                GNUPGHOME="${WORKSPACE}/.gnupg"
+            }
+            steps {
+                script {
+                    docker.image("$IMAGE_NAME").inside() {
+                        sh "rm -rf ${GNUPGHOME}"
+                        sh "gpg --import $GPG_FILE"
+                        retry(3) {
+                            sh "bash $DEPLOY_SCRIPT true"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
