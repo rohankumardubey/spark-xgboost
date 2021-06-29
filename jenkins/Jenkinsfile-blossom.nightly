@@ -43,15 +43,11 @@ pipeline {
         DEPLOY_SCRIPT='$LOCAL_ROOT/deploy-jvm-multi.sh'
         SERVER_URL = "${SERVERS_MAP["$DEPLOY_TYPE"][0]}"
         SERVER_ID = "${SERVERS_MAP["$DEPLOY_TYPE"][1]}"
-        ART_CREDS = credentials("svcngcc_artifactory")
+        ART_CREDS = credentials("urm_creds")
         ART_URL="${artUrl}"
         ARTIFACTORY_NAME = "${common.ARTIFACTORY_NAME}"
         PVC = credentials("pvc")
         CUSTOM_WORKSPACE = "/home/jenkins/agent/workspace/${JOB_NAME}"
-    }
-
-    triggers {
-        cron('H 1 * * *')
     }
 
     // Build stages
@@ -75,7 +71,7 @@ pipeline {
             steps {
                 script {
                     container('gpu') {
-                        sh "scl enable devtoolset-8 '$BUILD_SCRIPT $SIGN_FILE' "
+                        sh "scl enable devtoolset-9 '$BUILD_SCRIPT $SIGN_FILE' "
                         sh "bash $DEPLOY_SCRIPT $SIGN_FILE"
                     }
                 }
