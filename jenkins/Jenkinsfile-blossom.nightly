@@ -1,0 +1,92 @@
+#!/usr/bin/groovy
+@Library(['shared-libs', 'blossom-lib']) _
+
+def DEV3_IMAGE = "${common.ARTIFACTORY_NAME}/sw-spark-docker/xgboost:dev3-centos7"
+def artUrl="https://${common.ARTIFACTORY_NAME}/artifactory/sw-spark-maven"
+def localUrl=''
+try { localUrl="${SERVER_LOCAL_URL}" } catch (Exception e) { }
+
+
+def SERVERS_MAP = [
+    'Art': ["${artUrl}-local", 'snapshots'],
+    'Local': ["${localUrl}", 'spark.sw.nvidia.com'],
+]
+
+pipeline {
+    agent {
+        kubernetes {
+            label "xgb-release-pipeline"
+            cloud 'sc-ipp-blossom-prod'
+        }
+    }
+
+    // Setup common job properties
+    options {
+        ansiColor('xterm')
+        timestamps()
+        timeout(time: 360, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        gitLabConnection('GitLab Master')
+    }
+
+    parameters {
+        choice(name: 'DEPLOY_TYPE', choices: ['Art', 'Local'],
+            description: 'REPO where to deploy xgboost artifacts')
+        string(name: 'GPU_TYPE', defaultValue: 'Tesla_T4',
+                description: 'GPU type to run build with')
+        string(name: 'REF', defaultValue: 'nv-release-1.4.0', description: 'Commit to build')
+    }
+
+    environment {
+        LOCAL_ROOT='jenkins/local'
+        BUILD_SCRIPT='$LOCAL_ROOT/build-jvm-multi.sh'
+        DEPLOY_SCRIPT='$LOCAL_ROOT/deploy-jvm-multi.sh'
+        SERVER_URL = "${SERVERS_MAP["$DEPLOY_TYPE"][0]}"
+        SERVER_ID = "${SERVERS_MAP["$DEPLOY_TYPE"][1]}"
+        ART_CREDS = credentials("svcngcc_artifactory")
+        ART_URL="${artUrl}"
+        ARTIFACTORY_NAME = "${common.ARTIFACTORY_NAME}"
+        PVC = credentials("pvc")
+        CUSTOM_WORKSPACE = "/home/jenkins/agent/workspace/${JOB_NAME}"
+    }
+
+    triggers {
+        cron('H 1 * * *')
+    }
+
+    // Build stages
+    stages {
+        stage('Jenkins: Build & Deploy') {
+            agent {
+                kubernetes {
+                    label "xgb-nighly-$BUILD_NUMBER"
+                    cloud 'sc-ipp-blossom-prod'
+                    yaml pod.getGPUYAML("${DEV3_IMAGE}", "${GPU_TYPE}")
+                    workspaceVolume persistentVolumeClaimWorkspaceVolume(claimName: "${PVC}", readOnly: false)
+                    customWorkspace "${CUSTOM_WORKSPACE}"
+                }
+            }
+
+            environment {
+                // Local env for the current docker container
+                OUT="$WORKSPACE/out"
+                SIGN_FILE='false'
+            }
+            steps {
+                script {
+                    container('gpu') {
+                        sh "scl enable devtoolset-8 '$BUILD_SCRIPT $SIGN_FILE' "
+                        sh "bash $DEPLOY_SCRIPT $SIGN_FILE"
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                if (!params.MUTE_SLACK) common.slack(this, '#spark-etl-audit-story', "$message", '1')
+            }
+        }
+    }
+}

@@ -1,0 +1,78 @@
+FROM centos:7
+
+# envs used by nvidia-docker
+ENV NVIDIA_VISIBLE_DEVICES all
+ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
+ENV NVIDIA_REQUIRE_CUDA "cuda>=11.0"
+
+# setup repo for cuda
+RUN NVIDIA_GPGKEY_SUM=d1be581509378368edeec8c1eb2958702feedf3bc3d17011adbf24efacce4ab5 && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/7fa2af80.pub | sed '/^Version/d' > /etc/pki/rpm-gpg/RPM-GPG-KEY-NVIDIA && \
+    echo "$NVIDIA_GPGKEY_SUM  /etc/pki/rpm-gpg/RPM-GPG-KEY-NVIDIA" | sha256sum -c --strict -
+RUN echo $'[cuda]\n\
+name=cuda\n\
+baseurl=https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64\n\
+enabled=1\n\
+gpgcheck=1\n\
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-NVIDIA' > /etc/yum.repos.d/cuda.repo
+
+# install cuda
+ARG CUDA_VERSION=11-2-11.2.2-1
+RUN yum install -y \
+    cuda-cudart-11-2-11.2.152-1 \
+    cuda-libraries-$CUDA_VERSION \
+    cuda-libraries-devel-$CUDA_VERSION \
+    cuda-command-line-tools-$CUDA_VERSION \
+    cuda-minimal-build-$CUDA_VERSION \
+    cuda-compat-11-0
+
+# setup cuda env
+RUN echo "/usr/local/nvidia/lib" >> /etc/ld.so.conf.d/nvidia.conf && \
+    echo "/usr/local/nvidia/lib64" >> /etc/ld.so.conf.d/nvidia.conf
+ENV PATH /usr/local/nvidia/bin:/usr/local/cuda/bin:${PATH}
+ENV LD_LIBRARY_PATH /usr/local/nvidia/lib:/usr/local/nvidia/lib64
+
+# below has XGBoost related stuff
+ARG CUDA_A=cuda11.2
+
+# install basic softwares
+RUN yum install -y zlib-devel bzip2 centos-release-scl && \
+    yum install -y devtoolset-9 boost-devel
+
+ARG NCCL_VERSION=2.9.9-1
+
+# install nccl
+RUN curl -o nccl_v${NCCL_VERSION}.zip https://codeload.github.com/NVIDIA/nccl/zip/v${NCCL_VERSION} && \
+    unzip nccl_v${NCCL_VERSION}.zip && \
+    cd nccl-${NCCL_VERSION} && \
+    ln -s cuda-11.2 /usr/local/cuda && \
+    make -j4 src.build && \
+    make pkg.txz.build && \
+    tar -xf build/pkg/txz/nccl_${NCCL_VERSION}+${CUDA_A}_x86_64.txz -C /usr/local/ && \
+    make clean && \
+    cd .. && \
+    rm -rf nccl-${NCCL_VERSION} nccl_v${NCCL_VERSION}.zip /usr/local/cuda
+
+# install conda and softwares with it
+ARG CONDA_FILE=Miniconda3-latest-Linux-x86_64.sh
+RUN curl -O -L https://repo.continuum.io/miniconda/$CONDA_FILE && \
+    bash $CONDA_FILE -b -p /opt/conda && \
+    rm -f $CONDA_FILE
+ENV PATH=/opt/conda/bin/:$PATH
+RUN conda init --all && \
+    . ~/.bashrc && \
+    conda install -y cmake=3.19 openjdk maven git patch
+
+
+# set default environments
+RUN git config --system user.name ci && \
+    git config --system user.email ci@github.com && \
+    ln -s cuda-11.2 /usr/local/cuda && \
+    ln -s nccl_${NCCL_VERSION}+${CUDA_A}_x86_64 /usr/local/nccl
+ENV JAVA_HOME=/opt/conda
+ENV NCCL_ROOT=/usr/local/nccl
+
+# add tools to switch between envs
+ADD to_cudaver.sh /opt/tools/to_cudaver.sh
+
+RUN chmod 777 /usr/local

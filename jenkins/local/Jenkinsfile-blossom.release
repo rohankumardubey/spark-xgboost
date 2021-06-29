@@ -1,0 +1,77 @@
+#!/usr/local/env groovy
+/**
+*
+* Jenkins file to build xgboost with multi versions
+* and prepare bundle for release by single deployment.
+*/
+@Library(['shared-libs', 'blossom-lib']) _
+
+def DEV3_IMAGE = "${common.ARTIFACTORY_NAME}/sw-spark-docker/xgboost:dev3-centos7-cuda11.2"
+
+pipeline {
+    agent {
+        kubernetes {
+            label "xgb-release-pipeline"
+            cloud 'sc-ipp-blossom-prod'
+        }
+    }
+
+    options {
+        ansiColor('xterm')
+        timestamps()
+        timeout(time: 3, unit: 'HOURS')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    parameters {
+        string(name: 'DEPLOY_TO', defaultValue: 'https://oss.sonatype.org/service/local/staging/deploy/maven2',
+            description: 'The repo URL where to deploy the artifacts')
+        string(name: 'GPU_TYPE', defaultValue: 'Tesla_T4',
+                description: 'GPU type to run build with')
+        string(name: 'REF', defaultValue: 'rel-main', description: 'Commit to build')
+    }
+
+    environment {
+        LOCAL_ROOT='jenkins/local'
+        BUILD_SCRIPT="$LOCAL_ROOT/build-jvm-multi.sh"
+        DEPLOY_SCRIPT="$LOCAL_ROOT/deploy-jvm-multi.sh"
+        ART_URL = "https://${common.ARTIFACTORY_NAME}/artifactory/sw-spark-maven"
+        PVC = credentials("pvc")
+        CUSTOM_WORKSPACE = "/home/jenkins/agent/workspace/${JOB_NAME}"
+    }
+
+    stages {
+        stage ('Build & deploy') {
+            environment {
+                OUT="${WORKSPACE}/out"
+                SERVER_ID='ossrh'
+                SERVER_URL="${DEPLOY_TO}"
+                GPG_PASSPHRASE=credentials('SPARK_RAPIDS_GPG_PASSPHRASE')
+                GPG_FILE=credentials('SPARK_RAPIDS_GPG_PRIVATE_KEY')
+                SONATYPE=credentials('SPARK_SONATYPE_USERPASS')
+                GNUPGHOME="${WORKSPACE}/.gnupg"
+            }
+            agent {
+                kubernetes {
+                    label "xgb-release-build"
+                    cloud 'sc-ipp-blossom-prod'
+                    yaml pod.getGPUYAML("${DEV3_IMAGE}", "${GPU_TYPE}")
+                    workspaceVolume persistentVolumeClaimWorkspaceVolume(claimName: "${PVC}", readOnly: false)
+                    customWorkspace "${CUSTOM_WORKSPACE}"
+                }
+            }
+            steps {
+                container("gpu") {
+                    script {
+                        sh "rm -rf $OUT"
+                        sh "scl enable devtoolset-9 '$BUILD_SCRIPT true'"
+
+                        sh "rm -rf ${GNUPGHOME}"
+                        sh "gpg --import $GPG_FILE"
+                        sh "bash $DEPLOY_SCRIPT true"
+                    }
+                }
+            }
+        }
+    }
+}
