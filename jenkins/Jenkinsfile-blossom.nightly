@@ -1,7 +1,7 @@
 #!/usr/bin/groovy
 @Library(['shared-libs', 'blossom-lib']) _
 
-def DEV3_IMAGE = "${common.ARTIFACTORY_NAME}/sw-spark-docker/xgboost:dev3-centos7"
+def DEV3_IMAGE = "${common.ARTIFACTORY_NAME}/sw-spark-docker/xgboost:dev3-centos7-cuda11.2"
 def artUrl="https://${common.ARTIFACTORY_NAME}/artifactory/sw-spark-maven"
 def localUrl=''
 try { localUrl="${SERVER_LOCAL_URL}" } catch (Exception e) { }
