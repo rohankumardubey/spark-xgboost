@@ -61,7 +61,7 @@ RUN curl -O -L https://repo.continuum.io/miniconda/$CONDA_FILE && \
 ENV PATH=/opt/conda/bin/:$PATH
 RUN conda init --all && \
     . ~/.bashrc && \
-    conda install -y cmake=3.19 openjdk maven git patch
+    conda install -c conda-forge -y cmake=3.20.5 openjdk=8 maven git patch
 
 
 # set default environments
