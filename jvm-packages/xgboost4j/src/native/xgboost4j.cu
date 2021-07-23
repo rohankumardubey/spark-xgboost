@@ -228,7 +228,7 @@ class DataIteratorProxy {
     if (last_batch_) {
       jclass batch_class = CheckJvmCall(jenv_->GetObjectClass(last_batch_), jenv_);
       jmethodID closeMethod = CheckJvmCall(jenv_->GetMethodID(batch_class, "close", "()V"), jenv_);
-      CheckJvmCall(jenv_->CallObjectMethod(last_batch_, closeMethod), jenv_);
+      jenv_->CallVoidMethod(last_batch_, closeMethod);
       last_batch_ = nullptr;
     }
   }
