@@ -6,7 +6,7 @@
 
     <groupId>com.nvidia</groupId>
     <artifactId>xgboost-jvm_3.0</artifactId>
-    <version>1.4.2-0.1.0-SNAPSHOT</version>
+    <version>1.4.2</version>
     <packaging>pom</packaging>
     <name>XGBoost JVM Package</name>
     <description>JVM Package for XGBoost</description>
@@ -38,7 +38,7 @@
         <scala.version>2.12.8</scala.version>
         <scala.binary.version>2.12</scala.binary.version>
         <hadoop.version>2.7.3</hadoop.version>
-        <cudf.version>21.08.0-SNAPSHOT</cudf.version>
+        <cudf.version>21.08.2</cudf.version>
         <cudf.classifier>cuda11</cudf.classifier>
         <maven.wagon.http.retryHandler.count>5</maven.wagon.http.retryHandler.count>
         <log.capi.invocation>OFF</log.capi.invocation>
