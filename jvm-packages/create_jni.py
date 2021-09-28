@@ -25,7 +25,8 @@ CONFIG = {
     "USE_NCCL": "ON",
     "PLUGIN_RMM": "ON",
     "JVM_BINDINGS": "ON",
-    "LOG_CAPI_INVOCATION": "OFF"
+    "LOG_CAPI_INVOCATION": "OFF",
+    "BUILD_WITH_CUDA_CUB": "ON"
 }
 
 
