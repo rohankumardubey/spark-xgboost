@@ -167,8 +167,13 @@ class XGBoostRegressor (
   }
 
   override def fit(dataset: Dataset[_]): XGBoostRegressionModel = {
-    if (GpuUtils.isRapidsEnabled(dataset)) GpuXGBoost.fitOnGpu(this, dataset, None)
+    if (GpuUtils.isRapidsEnabled(Some(dataset))) GpuXGBoost.fitOnGpu(this, dataset, None)
     else super.fit(dataset)
+  }
+
+  override def transformSchema(schema: StructType): StructType = {
+    if (GpuUtils.isRapidsEnabled()) schema
+    else super.transformSchema(schema)
   }
 
   // for CrossValidator
@@ -426,10 +431,15 @@ class XGBoostRegressionModel private[ml] (
     Array(originalPredictionItr, predLeafItr, predContribItr)
   }
 
+  override def transformSchema(schema: StructType): StructType = {
+    if (GpuUtils.isRapidsEnabled()) schema
+    else super.transformSchema(schema)
+  }
+
   override def transform(dataset: Dataset[_]): DataFrame = {
     // Output selected columns only.
     // This is a bit complicated since it tries to avoid repeated computation.
-    var outputData = if (GpuUtils.isRapidsEnabled(dataset)) {
+    var outputData = if (GpuUtils.isRapidsEnabled(Some(dataset))) {
       GpuTransform.transformInternal(this, dataset, true, None)
     } else {
       transformSchema(dataset.schema, logging = true)
