@@ -59,7 +59,7 @@ case class GpuSampler(lb: Double, ub: Double, seed: Long, complement: Boolean = 
 class CrossValidator extends tuning.CrossValidator {
 
   override def fit(dataset: Dataset[_]): CrossValidatorModel = {
-    if (GpuUtils.isRapidsEnabled(dataset)) {
+    if (GpuUtils.isRapidsEnabled(Some(dataset))) {
       train(dataset)
     } else {
       super.fit(dataset)

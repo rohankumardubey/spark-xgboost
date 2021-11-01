@@ -22,7 +22,8 @@ import ml.dmlc.xgboost4j.scala.spark.params._
 import ml.dmlc.xgboost4j.scala.{Booster, DMatrix, EvalTrait, ObjectiveTrait, XGBoost => SXGBoost}
 import ml.dmlc.xgboost4j.{LabeledPoint => XGBLabeledPoint}
 import org.apache.hadoop.fs.Path
-import org.apache.spark.TaskContext
+
+import org.apache.spark.{SparkContext, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.ml.classification._
 import org.apache.spark.ml.linalg._
@@ -34,7 +35,6 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 import org.json4s.DefaultFormats
-
 import scala.collection.JavaConverters._
 import scala.collection.{AbstractIterator, Iterator, mutable}
 
@@ -167,8 +167,13 @@ class XGBoostClassifier (
   }
 
   override def fit(dataset: Dataset[_]): XGBoostClassificationModel = {
-    if (GpuUtils.isRapidsEnabled(dataset)) GpuXGBoost.fitOnGpu(this, dataset, None)
+    if (GpuUtils.isRapidsEnabled(Some(dataset))) GpuXGBoost.fitOnGpu(this, dataset, None)
     else super.fit(dataset)
+  }
+
+  override def transformSchema(schema: StructType): StructType = {
+    if (GpuUtils.isRapidsEnabled()) schema
+    else super.transformSchema(schema)
   }
 
   // for CrossValidator
@@ -458,8 +463,13 @@ class XGBoostClassificationModel private[ml](
     Array(rawPredictionItr, probabilityItr, predLeafItr, predContribItr)
   }
 
+  override def transformSchema(schema: StructType): StructType = {
+    if (GpuUtils.isRapidsEnabled()) schema
+    else super.transformSchema(schema)
+  }
+
   override def transform(dataset: Dataset[_]): DataFrame = {
-    if (GpuUtils.isRapidsEnabled(dataset)) {
+    if (GpuUtils.isRapidsEnabled(Some(dataset))) {
       RapidsUtils.prepareColumnType(dataset, $(featuresCols), null, fitting = false)
     } else {
       transformSchema(dataset.schema, logging = true)
@@ -472,7 +482,7 @@ class XGBoostClassificationModel private[ml](
 
     // Output selected columns only.
     // This is a bit complicated since it tries to avoid repeated computation.
-    var outputData = if (GpuUtils.isRapidsEnabled(dataset)) {
+    var outputData = if (GpuUtils.isRapidsEnabled(Some(dataset))) {
       GpuTransform.transformInternal(this, dataset, None)
     } else {
       transformInternal(dataset)

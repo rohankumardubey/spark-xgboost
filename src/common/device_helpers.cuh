@@ -75,6 +75,16 @@ __device__ __forceinline__ double atomicAdd(double* address, double val) {  // N
 #endif
 
 namespace dh {
+
+// FIXME(jiamingy): Remove this once we get rid of cub submodule.
+constexpr bool BuildWithCUDACub() {
+#if defined(THRUST_IGNORE_CUB_VERSION_CHECK) && THRUST_IGNORE_CUB_VERSION_CHECK == 1
+  return false;
+#else
+  return true;
+#endif // defined(THRUST_IGNORE_CUB_VERSION_CHECK) && THRUST_IGNORE_CUB_VERSION_CHECK == 1
+}
+
 namespace detail {
 template <size_t size>
 struct AtomicDispatcher;
@@ -685,6 +695,37 @@ typename std::iterator_traits<T>::value_type SumReduction(T in, int nVals) {
   return sum;
 }
 
+constexpr std::pair<int, int> CUDAVersion() {
+#if defined(__CUDACC_VER_MAJOR__)
+  return std::make_pair(__CUDACC_VER_MAJOR__, __CUDACC_VER_MINOR__);
+#else
+  // clang/clang-tidy
+  return std::make_pair((CUDA_VERSION) / 1000, (CUDA_VERSION) % 100 / 10);
+#endif  // defined(__CUDACC_VER_MAJOR__)
+}
+
+constexpr std::pair<int32_t, int32_t> ThrustVersion() {
+  return std::make_pair(THRUST_MAJOR_VERSION, THRUST_MINOR_VERSION);
+}
+
+namespace detail {
+template <typename T>
+using TypedDiscardCTK114 = thrust::discard_iterator<T>;
+
+template <typename T>
+class TypedDiscard : public thrust::discard_iterator<T> {
+ public:
+  using value_type = T;  // NOLINT
+};
+} // namespace detail
+
+template <typename T>
+using TypedDiscard =
+    std::conditional_t<((ThrustVersion().first == 1 &&
+                         ThrustVersion().second >= 12) ||
+                        ThrustVersion().first > 1),
+                       detail::TypedDiscardCTK114<T>, detail::TypedDiscard<T>>;
+
 /**
  * \class AllReducer
  *
@@ -1282,7 +1323,7 @@ void InclusiveScan(InputIteratorT d_in, OutputIteratorT d_out, ScanOpT scan_op,
                         OffsetT>::Dispatch(nullptr, bytes, d_in, d_out, scan_op,
                                            cub::NullType(), num_items, nullptr,
                                            false)));
-  dh::TemporaryArray<char> storage(bytes);
+  TemporaryArray<char> storage(bytes);
   safe_cuda((
       cub::DispatchScan<InputIteratorT, OutputIteratorT, ScanOpT, cub::NullType,
                         OffsetT>::Dispatch(storage.data().get(), bytes, d_in,
@@ -1325,24 +1366,27 @@ void ArgSort(xgboost::common::Span<U> keys, xgboost::common::Span<IdxT> sorted_i
   cub::DoubleBuffer<ValueT> d_values(const_cast<ValueT *>(sorted_idx.data()),
                                      sorted_idx_out.data().get());
 
+  // track https://github.com/NVIDIA/cub/pull/340 for 64bit length support
+  using OffsetT = std::conditional_t<!BuildWithCUDACub(), std::ptrdiff_t, int32_t>;
+  CHECK_LE(sorted_idx.size(), std::numeric_limits<OffsetT>::max());
   if (accending) {
     void *d_temp_storage = nullptr;
-    safe_cuda((cub::DispatchRadixSort<false, KeyT, ValueT, size_t>::Dispatch(
+    safe_cuda((cub::DispatchRadixSort<false, KeyT, ValueT, OffsetT>::Dispatch(
         d_temp_storage, bytes, d_keys, d_values, sorted_idx.size(), 0,
         sizeof(KeyT) * 8, false, nullptr, false)));
     TemporaryArray<char> storage(bytes);
     d_temp_storage = storage.data().get();
-    safe_cuda((cub::DispatchRadixSort<false, KeyT, ValueT, size_t>::Dispatch(
+    safe_cuda((cub::DispatchRadixSort<false, KeyT, ValueT, OffsetT>::Dispatch(
         d_temp_storage, bytes, d_keys, d_values, sorted_idx.size(), 0,
         sizeof(KeyT) * 8, false, nullptr, false)));
   } else {
     void *d_temp_storage = nullptr;
-    safe_cuda((cub::DispatchRadixSort<true, KeyT, ValueT, size_t>::Dispatch(
+    safe_cuda((cub::DispatchRadixSort<true, KeyT, ValueT, OffsetT>::Dispatch(
         d_temp_storage, bytes, d_keys, d_values, sorted_idx.size(), 0,
         sizeof(KeyT) * 8, false, nullptr, false)));
     TemporaryArray<char> storage(bytes);
     d_temp_storage = storage.data().get();
-    safe_cuda((cub::DispatchRadixSort<true, KeyT, ValueT, size_t>::Dispatch(
+    safe_cuda((cub::DispatchRadixSort<true, KeyT, ValueT, OffsetT>::Dispatch(
         d_temp_storage, bytes, d_keys, d_values, sorted_idx.size(), 0,
         sizeof(KeyT) * 8, false, nullptr, false)));
   }
@@ -1352,7 +1396,7 @@ void ArgSort(xgboost::common::Span<U> keys, xgboost::common::Span<IdxT> sorted_i
 }
 
 namespace detail {
-// Wrapper around cub sort for easier `descending` sort and `size_t num_items`.
+// Wrapper around cub sort for easier `descending` sort.
 template <bool descending, typename KeyT, typename ValueT,
           typename OffsetIteratorT>
 void DeviceSegmentedRadixSortPair(
@@ -1364,7 +1408,8 @@ void DeviceSegmentedRadixSortPair(
   cub::DoubleBuffer<KeyT> d_keys(const_cast<KeyT *>(d_keys_in), d_keys_out);
   cub::DoubleBuffer<ValueT> d_values(const_cast<ValueT *>(d_values_in),
                                      d_values_out);
-  using OffsetT = size_t;
+  using OffsetT = int32_t;  // num items in dispatch is also int32_t, no way to change.
+  CHECK_LE(num_items, std::numeric_limits<int32_t>::max());
   safe_cuda((cub::DispatchSegmentedRadixSort<
              descending, KeyT, ValueT, OffsetIteratorT,
              OffsetT>::Dispatch(d_temp_storage, temp_storage_bytes, d_keys,

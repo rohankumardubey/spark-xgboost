@@ -19,17 +19,27 @@ package ml.dmlc.xgboost4j.scala.spark.rapids
 import ai.rapids.cudf.Table
 import ml.dmlc.xgboost4j.java.spark.rapids.GpuColumnBatch
 import ml.dmlc.xgboost4j.scala.{ColumnDMatrix, DMatrix}
+
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, Dataset}
-import org.apache.spark.TaskContext
+import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.{RapidsUtils, SparkConf, SparkContext, TaskContext}
 import org.apache.spark.sql.types.StructType
 
 private[spark] object GpuUtils {
 
   // APIs for plugin related
-  def isRapidsEnabled(data: Dataset[_]): Boolean = {
-    val pluginName = data.sparkSession.sparkContext.getConf.get("spark.sql.extensions", "")
-    pluginName.split(",").contains("com.nvidia.spark.rapids.SQLExecPlugin")
+  def isRapidsEnabled(dataset: Option[Dataset[_]] = None): Boolean = {
+   val confOption = dataset.map {ds =>
+      Some(ds.sparkSession.sparkContext.getConf)
+    }.getOrElse(
+      RapidsUtils.getSparkContext().map(sc => sc.getConf)
+    )
+
+    confOption.map { conf =>
+      conf.get("spark.sql.extensions", "")
+        .split(",")
+        .contains("com.nvidia.spark.rapids.SQLExecPlugin")
+    }.getOrElse(false)
   }
 
   // scalastyle:off classforname
