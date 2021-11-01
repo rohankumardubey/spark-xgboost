@@ -368,8 +368,19 @@ def _is_cudf_df(data):
     return hasattr(cudf, 'DataFrame') and isinstance(data, cudf.DataFrame)
 
 
-def _cudf_array_interfaces(data):
-    '''Extract CuDF __cuda_array_interface__'''
+def _cudf_array_interfaces(data) -> Tuple[list, bytes]:
+    """Extract CuDF __cuda_array_interface__.  This is special as it returns a new list of
+    data and a list of array interfaces.  The data is list of categorical codes that
+    caller can safely ignore, but have to keep their reference alive until usage of array
+    interface is finished.
+
+    """
+    try:
+        from cudf.api.types import is_categorical_dtype
+    except ImportError:
+        from cudf.utils.dtypes import is_categorical_dtype
+
+    cat_codes = []
     interfaces = []
     if _is_cudf_ser(data):
         interfaces.append(data.__cuda_array_interface__)
@@ -383,7 +394,17 @@ def _cudf_array_interfaces(data):
     return interfaces_str
 
 
-def _transform_cudf_df(data, feature_names, feature_types):
+def _transform_cudf_df(
+    data,
+    feature_names: Optional[List[str]],
+    feature_types: Optional[List[str]],
+    enable_categorical: bool,
+):
+    try:
+        from cudf.api.types import is_categorical_dtype
+    except ImportError:
+        from cudf.utils.dtypes import is_categorical_dtype
+
     if feature_names is None:
         if _is_cudf_ser(data):
             feature_names = [data.name]
